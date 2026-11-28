@@ -8,6 +8,14 @@ Examples:
 - shadows further out, coarser near the camera: `{"shadows": {"max_distance": 400, "split_lambda": 0.6}}`
 - stronger, wider ambient occlusion: `{"ao": {"radius": 1.5, "strength": 3}}`
 - dimmer sky light: `{"ibl": {"intensity": 0.6}}`
+- sharper, longer reflections on glossy floors: `{"ssr": {"quality": "high", "max_roughness": 0.7}}`
+- compare the old single-scattering metals: `{"ibl": {"multiscatter": false}}`
 - render at half resolution per axis and upscale (needs TAA on): `{"upscaler": {"mode": "performance"}}`
+- filmic highlights: `{"tonemap": {"operator": "agx"}}`
+- shallow depth of field (the active camera's lens and focus decide the blur): `{"dof": {"enabled": true}}`
+- warm golden-hour grade: `{"grading": {"temperature_k": 5200, "contrast": 1.1, "gain_r": 1.04, "lift_b": 0.02}}`
+- a look LUT from the project: `{"grading": {"lut": "assets/luts/teal_orange.cube", "lut_contribution": 0.7}}` (the file must be a valid `.cube` inside the project; `""` removes it)
+- lens character: `{"film": {"vignette_natural": 1, "grain_intensity": 0.25}}`
+- exposure from the camera (aperture, shutter, ISO on its `camera` component): `{"exposure": {"physical": true}}`
 
 Change one group at a time and compare screenshots; `render_settings_reset` undoes a group.

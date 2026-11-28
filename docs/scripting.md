@@ -284,6 +284,9 @@ error listing what exists.
 | `time.elapsed()` | Simulated seconds since Play started. |
 | `time.frame()` | Simulated frames since Play started. |
 | `time.fixed_delta()` | The fixed step of `on_fixed_update` (1/60). |
+| `time.clock()` | The scene's world clock and sky as a table: `datetime`, `latitude_deg`, `longitude_deg`, `time_scale`, `enabled`, …, `sun` / `moon` (`azimuth_deg` compass bearing, `elevation_deg`, `direction` vec3, `illuminated_fraction`, `phase`, sunrise / sunset / moonrise / moonset times). The same fields as the remote `time.get` ([`remote-control.md`](remote-control.md#world-clock-roadmap-r221)); `in_scene` is false while the scene has no clock. |
+| `time.set_clock{...}` | Change the clock (creating it if needed): any of `datetime`, `local_time` (`"hh:mm"`), `utc_offset_h`, `latitude_deg`, `longitude_deg`, `north_offset_deg`, `time_scale`, `fixed_day`, `enabled`, `drive_sun`, `sun_intensity`. Unknown or out-of-range fields raise an error; nothing changes then. Returns `time.clock()`. |
+| `time.skip(hours)` | Move the clock by `hours` (negative goes back, at most ten years). Raises an error without a clock. Returns `time.clock()`. |
 | `print(...)` | Log at level `info`, category `script`, prefixed with the script path. |
 | `log.debug(...)`, `log.info(...)`, `log.warn(...)`, `log.error(...)` | Log at that level. |
 

@@ -375,6 +375,38 @@ TEST(GpuGrass, SlopeAndHeightLimitsRejectBlades) {
     EXPECT_GT(low, 1000U);
     EXPECT_GT(plateau, 1000U);
 
+    // The slope fade on the GPU matches the CPU reference: on the 45-degree
+    // ramp the placed fraction (blades whose keep threshold passes, relative
+    // to flat ground) is min(1, grass_slope_keep / (1 - grass_fade_band)).
+    // Deep in the band (limit 47: ~0.20), shallow in it (limit 50: ~0.83)
+    // and outside it (limit 60, band 52..60: 1) pin the band's depth, its
+    // edge order and its start.
+    const auto ramp_ratio = [&](float max_slope_deg) -> double {
+        r::GrassFrame faded = frame;
+        faded.settings.slope_deg = glm::vec2(0.0F, max_slope_deg);
+        auto out = generate(*g, *pass, faded);
+        EXPECT_TRUE(out.has_value());
+        if (!out) return -1.0;
+        std::size_t flat_band = 0; // x in (-31, -1): 30 m wide
+        std::size_t ramp_band = 0; // x in (1.5, 6.5): 5 m wide, exactly 45 degrees
+        for (const auto& bl : out->blades) {
+            if (bl.root.x > -31.0F && bl.root.x < -1.0F) ++flat_band;
+            if (bl.root.x > 1.5F && bl.root.x < 6.5F) ++ramp_band;
+        }
+        EXPECT_GT(flat_band, 1000U);
+        return (static_cast<double>(ramp_band) / 5.0) /
+               std::max(static_cast<double>(flat_band) / 30.0, 1.0);
+    };
+    for (const float limit : {47.0F, 50.0F, 60.0F}) {
+        r::GrassSettings s = frame.settings;
+        s.slope_deg = glm::vec2(0.0F, limit);
+        const double keep = r::grass_slope_keep(s, std::cos(glm::radians(45.0F)));
+        const double expected = std::min(1.0, keep / (1.0 - r::grass_fade_band));
+        const double ratio = ramp_ratio(limit);
+        EXPECT_NEAR(ratio, expected, 0.35 * expected)
+            << "max slope " << limit << ": CPU keep " << keep;
+    }
+
     // Heights up to 5 m: the plateau is bare too.
     frame.settings.height_m = glm::vec2(-1.0F, 5.0F);
     auto low_only = generate(*g, *pass, frame);

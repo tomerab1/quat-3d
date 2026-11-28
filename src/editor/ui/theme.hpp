@@ -5,8 +5,9 @@
 // maths their tests hold them to. Panels never use raw colour literals —
 // they read ui::tokens().
 //
-// Colours are sRGB-authored (as ImGui expects; the UI shader linearises
-// them), so contrast_ratio() follows WCAG 2.x directly on these values.
+// Colours are sRGB-authored and blended in sRGB (gamma) space, as ImGui
+// expects (the UI pass composites on the encoded bytes, issue #92), so
+// contrast_ratio() and composite() follow WCAG 2.x directly on these values.
 // See docs/editor-ux.md for how each role is meant to be used.
 
 #include <cstddef>

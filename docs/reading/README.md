@@ -28,6 +28,8 @@ If you read only a few things, read these. They underpin most of the engine.
 3. **Moving Frostbite to Physically Based Rendering 3.0** — Lagarde & de Rousiers,
    SIGGRAPH 2014. The most complete practical PBR write-up: units, lights,
    materials, IBL. [course notes (PDF)](https://seblagarde.files.wordpress.com/2015/07/course_notes_moving_frostbite_to_pbr_v32.pdf)
+   Its camera chapter (EV100 from aperture, shutter and ISO) is R20's
+   physical exposure: `src/renderer/physical_camera.cpp`.
 4. **Physically Based Rendering: From Theory to Implementation, 4th ed.** —
    Pharr, Jakob, Humphreys. Free online; the theory behind microfacets,
    sampling and volumes. [pbr-book.org](https://pbr-book.org/4ed/contents)
@@ -94,8 +96,11 @@ If you read only a few things, read these. They underpin most of the engine.
 | ✅ | **Physically-Based Shading at Disney** — Burley, SIGGRAPH 2012. [PDF](https://media.disneyanimation.com/uploads/production/publication_asset/48/asset/s2012_pbs_disney_brdf_notes_v3.pdf) | Material parameterisation |
 | ✅ | **Real Shading in Unreal Engine 4** — Karis 2013 (see *Where to start*) | Split-sum IBL, `lib/pbr.slang` |
 | ✅ | **Filtering Distributions of Normals for Shading Antialiasing** — Kaplanyan, Hill, Patney, Lefohn, HPG 2016; refined by Tokuyoshi & Kaplanyan, I3D 2019. [NVIDIA Research](https://research.nvidia.com/publication/2016-06_filtering-distributions-normals-shading-antialiasing) | Geometric specular AA, `lib/pbr.slang` |
-| 🔧 | **Revisiting Physically Based Shading at Imageworks** — Kulla & Conty, SIGGRAPH 2017 (energy-conserving multiple scattering). [course page](https://blog.selfshadow.com/publications/s2017-shading-course/) | R21 lighting realism (#80) |
-| 🔧 | **A Multiple-Scattering Microfacet Model for Real-Time Image-based Lighting** — Fdez-Agüera, JCGT 2019. [JCGT](https://jcgt.org/published/0008/01/03/) | R21 (#80) |
+| ✅ | **Revisiting Physically Based Shading at Imageworks** — Kulla & Conty, SIGGRAPH 2017 (energy-conserving multiple scattering). [course page](https://blog.selfshadow.com/publications/s2017-shading-course/) | Punctual-light compensation (Filament's form): `assets/shaders/lib/brdf_energy.slang`, `lighting.slang` |
+| ✅ | **A Multiple-Scattering Microfacet Model for Real-Time Image-based Lighting** — Fdez-Agüera, JCGT 2019. [JCGT](https://jcgt.org/published/0008/01/03/) | `lib/brdf_energy.slang` (`ibl_energy`), `lighting.slang`; the DFG LUT it reads, `ibl_brdf_lut.slang` |
+| ✅ | **Horizon Occlusion for Normal Mapped Reflections** — Russell (Marmoset), 2014, as used in Jimenez et al., *Practical Realtime Strategies for Accurate Indirect Occlusion*, SIGGRAPH 2016. [Marmoset](https://marmosetco.tumblr.com/post/81245981087) | `lib/brdf_energy.slang` (`horizon_occlusion`), geometric normal from depth in `lighting.slang` |
+| ✅ | **Real-time Shading with Filtered Importance Sampling** — Křivánek & Colbert, GPU Gems 3 ch. 20, 2008. [NVIDIA](https://developer.nvidia.com/gpugems/gpugems3/part-iii-rendering/chapter-20-gpu-based-importance-sampling) | HDRI GGX prefilter: `assets/shaders/env_prefilter.slang` (R21) |
+| ✅ | **An Efficient Representation for Irradiance Environment Maps** — Ramamoorthi & Hanrahan, SIGGRAPH 2001. [PDF](https://cseweb.ucsd.edu/~ravir/papers/envmap/envmap.pdf) | SH9 irradiance: `assets/shaders/lib/sh9.slang`, `sh_project.slang`, `sh_irradiance.slang` (R21) |
 
 ## Lighting pipeline
 
@@ -116,6 +121,7 @@ If you read only a few things, read these. They underpin most of the engine.
 | ✅ | **Stable Cascaded Shadow Maps** — Valient, ShaderX6 (2008); also Microsoft's **Cascaded Shadow Maps** article. [learn.microsoft.com](https://learn.microsoft.com/en-us/windows/win32/dxtecharts/cascaded-shadow-maps) | Texel snapping, `csm.hpp` |
 | ✅ | **Practical Realtime Strategies for Accurate Indirect Occlusion** (GTAO) — Jimenez, Wu, Pesce, Jarabo, SIGGRAPH 2016. [PDF](https://www.activision.com/cdn/research/Practical_Real_Time_Strategies_for_Accurate_Indirect_Occlusion_NEW%20VERSION_COLOR.pdf) | `assets/shaders/gtao.slang`, `lib/occlusion.slang` (multi-bounce, eq. 10) |
 | ✅ | **XeGTAO** — Strugar & McCalla (Intel), MIT-licensed reference implementation we port. [GitHub](https://github.com/GameTechDev/XeGTAO) | `gtao.slang`, `gtao_denoise.slang` |
+| ✅ | **Accurate Normal Reconstruction from Depth Buffer** — Yuwen Wu, 2021. [blog](https://atyuwen.github.io/posts/normal-reconstruction) | `lib/occlusion.slang` contact shadows: `depth_slope` picks each axis's neighbour on the texel's own surface by second difference (#86) |
 | 🔧 | **Hashed Alpha Testing** — Wyman & McGuire, I3D 2017. [NVIDIA Research](https://research.nvidia.com/labs/rtr/publication/wyman2017hashed) | Alpha MASK cut-outs (#70); planned: R25.2 seasonal leaf drop |
 | 🔧 | **Anti-aliased Alpha Test: The Esoteric Alpha To Coverage** — Golus, 2017 (coverage-preserving mips). [Medium](https://bgolus.medium.com/anti-aliased-alpha-test-the-esoteric-alpha-to-coverage-8b177335ae4f) | #70 |
 
@@ -132,6 +138,29 @@ If you read only a few things, read these. They underpin most of the engine.
 | 🗺 | **Volumetric Fog: Unified Compute Shader-Based Solution to Atmospheric Scattering** — Wronski, SIGGRAPH 2014. [PDF](https://www.advances.realtimerendering.com/s2014/wronski/bwronski_volumetric_fog_siggraph2014.pdf) | R13 froxel fog |
 | 🗺 | **Physically Based and Unified Volumetric Rendering in Frostbite** — Hillaire, SIGGRAPH 2015. [EA](https://www.ea.com/news/physically-based-unified-volumetric-rendering-in-frostbite) | R13 froxel fog |
 
+## Astronomy & time of day
+
+The world clock and ephemerides of R22.1 (`src/astro/`, `src/scene/world_clock.cpp`) and the night sky planned for R22.2.
+
+| | Reading | In quat-3d |
+|---|---|---|
+| 🔧 | **Astronomical Algorithms, 2nd ed.** — Meeus, Willmann-Bell, 1998 (ISBN 978-0-943396-61-3). Julian day (ch. 7), sidereal time (12), coordinate transforms (13), refraction (16), precession (21), nutation (22), the low-accuracy Sun and the equation of time (25, 28), the Moon's position (47), phase and bright limb (48), libration (53); its worked examples are our test cases | `src/astro/`, `tests/astro/` (#87) |
+| 🔧 | **The lunar ephemeris ELP 2000** — Chapront-Touzé & Chapront, A&A 124, 50, 1983 (ELP-2000/82, the theory behind Meeus' tables 47.A/47.B). [ADS](https://ui.adsabs.harvard.edu/abs/1983A%26A...124...50C/abstract) | `src/astro/moon_terms.cpp`, `src/astro/moon.cpp` (#87) |
+| 🔧 | **Astronomical refraction** — Sæmundsson, Sky & Telescope, July 1986, p. 70. The refraction-from-true-altitude formula (Meeus 16.4) | `refraction()`, `src/astro/coords.cpp` (#87) |
+| 🔧 | **Text-Book on Spherical Astronomy** — W. M. Smart, Cambridge University Press (the 1956 edition Meeus cites for 28.3). The equation of time from L0, M, e and ε | `equation_of_time_min`, `src/astro/sun.cpp` (#87) |
+| 🔧 | **NOAA Solar Calculator** — NOAA Global Monitoring Laboratory; the same low-accuracy solar algorithm (after Meeus). [calculator](https://gml.noaa.gov/grad/solcalc/) · [calculation details](https://gml.noaa.gov/grad/solcalc/calcdetails.html) | `src/astro/sun.cpp` (#87) |
+| 🔧 | **Astronomy on the Personal Computer, 4th ed.** — Montenbruck & Pfleger, Springer, 2000. Rise / set / twilight by scanning the altitude, interpolating each step and refining crossings and grazing extrema | `src/astro/events.cpp` (#87) |
+| 🔧 | **Five Millennium Canon of Solar Eclipses** (ΔT polynomials) — Espenak & Meeus, NASA/TP-2006-214141. [ΔT expressions](https://eclipse.gsfc.nasa.gov/SEcat5/deltatpoly.html) | `delta_t_seconds`, `src/astro/time.cpp` (#87) |
+| 🔧 | **chrono-Compatible Low-Level Date Algorithms** — Hinnant. [article](https://howardhinnant.github.io/date_algorithms.html) | `days_from_civil` / `civil_from_days` (#87) |
+| 🔧 | **A model of the brightness of moonlight** — Krisciunas & Schaefer, PASP 103, 1033, 1991. [DOI](https://doi.org/10.1086/132921) | Moon illuminance, `src/astro/moon.cpp` (#87) |
+| 🔧 | **Revised optical air mass tables and approximation formula** — Kasten & Young, Applied Optics 28(22), 4735, 1989. [DOI](https://doi.org/10.1364/AO.28.004735) | `airmass`, `src/astro/coords.cpp` (#87) |
+| 🔧 | **Reference luminous solar constant and solar luminance for illuminance calculations** — Darula, Kittler & Gueymard, Solar Energy 79(5), 559, 2005. [DOI](https://doi.org/10.1016/j.solener.2005.01.004) | Sun illuminance (133 334 lx), `src/astro/sun.cpp` (#87) |
+| 🗺 | **A Physically-Based Night Sky Model** — Jensen, Durand, Stark, Premože, Dorsey & Shirley, SIGGRAPH 2001. The canonical reference for R22.2: stars, moonlight, airglow, zodiacal light, scotopic viewing | R22.2 night sky |
+| 🗺 | **Model for artificial night-sky illumination** — Garstang, PASP 98, 1986 | R22.2 light-pollution skyglow |
+| 🗺 | **Theory of Reflectance and Emittance Spectroscopy** — Hapke, Cambridge University Press (2nd ed. 2012). Lunar BRDF and the opposition surge | R22.2 Moon shading |
+| 🗺 | **A Spatial Post-Processing Algorithm for Images of Night Scenes** — Thompson, Shirley & Ferwerda, Journal of Graphics Tools 7(1), 2002 | R22.2 night perception (blue shift, acuity loss, noise) |
+| 🗺 | **Perceptually Based Tone Mapping for Low-Light Conditions** — Kirk & O'Brien, SIGGRAPH 2011 | R22.2 scotopic / mesopic tone mapping |
+
 ## Anti-aliasing, post-processing & camera
 
 | | Reading | In quat-3d |
@@ -139,10 +168,19 @@ If you read only a few things, read these. They underpin most of the engine.
 | ✅ | **High Quality Temporal Supersampling** — Karis, SIGGRAPH 2014. [course page](https://advances.realtimerendering.com/s2014/) | `assets/shaders/taa.slang` |
 | ✅ | **An Excursion in Temporal Supersampling** — Salvi, GDC 2016 (variance clipping). [PDF](https://developer.download.nvidia.com/gameworks/events/GDC2016/msalvi_temporal_supersampling.pdf) | `taa.slang` |
 | ✅ | **Temporal AA and the Quest for the Holy Trail** — López, 2022. Approachable TAA overview. [blog](https://www.elopezr.com/temporal-aa-and-the-quest-for-the-holy-trail/) | `taa.slang`; TAAU upscaler (R11) |
-| ✅ | **Next Generation Post Processing in Call of Duty: Advanced Warfare** — Jimenez, SIGGRAPH 2014 (bloom, motion blur, DoF, interleaved gradient noise). [iryoku.com](https://www.iryoku.com/next-generation-post-processing-in-call-of-duty-advanced-warfare/) | `bloom_down.slang`; R20 DoF & motion blur (#79) |
-| ✅ | **ACES Filmic Tone Mapping Curve** — Narkowicz, 2016. [blog](https://knarkowicz.wordpress.com/2016/01/06/aces-filmic-tone-mapping-curve/) | `assets/shaders/tonemap.slang` |
-| 🔧 | **AgX** — Sobotka's view transform, and **Minimal AgX implementation** (iolite). [AgX](https://github.com/sobotka/AgX) · [minimal implementation](https://iolite-engine.com/blog_posts/minimal_agx_implementation) | R20 (#79) |
-| 🔧 | **Stochastic Screen-Space Reflections** — Stachowiak, SIGGRAPH 2015. [EA](https://www.ea.com/frostbite/news/stochastic-screen-space-reflections) | R21 SSR (#80) |
+| ✅ | **Next Generation Post Processing in Call of Duty: Advanced Warfare** — Jimenez, SIGGRAPH 2014 (bloom, motion blur, DoF, interleaved gradient noise). [iryoku.com](https://www.iryoku.com/next-generation-post-processing-in-call-of-duty-advanced-warfare/) | `bloom_down.slang`; R20: `dof_*.slang` (CoC tiles, near/far gather, composite), `motion_blur*.slang` sampling and IGN jitter (#79) |
+| ✅ | **ACES Filmic Tone Mapping Curve** — Narkowicz, 2016. [blog](https://knarkowicz.wordpress.com/2016/01/06/aces-filmic-tone-mapping-curve/) | `assets/shaders/lib/color.slang` (`AcesTonemapper`), CPU reference `src/renderer/color_grading.cpp` |
+| 🔧 | **AgX** — Sobotka's view transform as Blender 4 ships it, and **Minimal AgX implementation** (iolite). [AgX](https://github.com/sobotka/AgX) · [minimal implementation](https://iolite-engine.com/blog_posts/minimal_agx_implementation) | R20 `AgxTonemapper` in `lib/color.slang`, CPU reference in `color_grading.cpp` (#79) |
+| 🔧 | **A Reconstruction Filter for Plausible Motion Blur** — McGuire, Hennessy, Bukowski & Osman, I3D 2012 (TileMax / NeighborMax, cone and cylinder weights, soft depth comparison). [PDF](https://casual-effects.com/research/McGuire2012Blur/McGuire12Blur.pdf) | R20 `motion_blur_tiles.slang`, `motion_blur_neighbor.slang`, `motion_blur.slang` (#79) |
+| 🔧 | **A Fast and Stable Feature-Aware Motion Blur Filter** — Guertin, McGuire & Nowrouzezahrai, HPG 2014 (alternate sampling along the pixel's own vector). [project page](https://casual-effects.com/research/Guertin2013MotionBlur/) | R20 `motion_blur.slang` (#79) |
+| 🔧 | **Khronos PBR Neutral Tone Mapper** — Khronos 3D Commerce, 2024. [specification](https://github.com/KhronosGroup/ToneMapping/tree/main/PBR_Neutral) | R20 `PbrNeutralTonemapper` in `lib/color.slang`, CPU reference in `color_grading.cpp` (#79) |
+| 🔧 | **ACEScct — A Quasi-Logarithmic Encoding of ACES Data** — Academy S-2016-001. [ACES documentation](https://docs.acescentral.com/) | R20 grading (contrast, lift / gamma / gain) in `lib/color.slang` and `color_grading.cpp` (#79) |
+| 🔧 | **Chromatic adaptation** (von Kries in Bradford LMS) — Lindbloom; and **Planckian locus approximation** — Krystek, *Color Res. Appl.* 1985. [Lindbloom](http://www.brucelindbloom.com/index.html?Eqn_ChromAdapt.html) | R20 white balance, `color_grading.cpp` `white_balance_matrix` (#79) |
+| 🔧 | **Cube LUT Specification 1.0** — Adobe, 2013 (the `.cube` text format Resolve also writes). | R20 look LUTs: parser `src/asset/cube_lut.cpp` (#79) |
+| ✅ | **Stochastic Screen-Space Reflections** — Stachowiak, SIGGRAPH 2015. [EA](https://www.ea.com/frostbite/news/stochastic-screen-space-reflections) | `assets/shaders/ssr_trace.slang`, `ssr_resolve.slang` (ray reuse), `ssr_temporal.slang`; `src/renderer/ssr_pass.cpp` |
+| ✅ | **Sampling the GGX Distribution of Visible Normals** — Heitz, JCGT 2018. [JCGT](https://jcgt.org/published/0007/04/01/) | SSR ray directions: `lib/ssr_common.slang` (`ssr_sample_vndf`) |
+| ✅ | **Hi-Z Screen-Space Cone-Traced Reflections** — Uludag, GPU Pro 5, 2014; with the min-Z traversal of **AMD FidelityFX SSSR**. [FidelityFX SSSR](https://gpuopen.com/fidelityfx-sssr/) | SSR Hi-Z march: `assets/shaders/ssr_trace.slang` (`hiz_march`) over R12's pyramid |
+| ✅ | **Building an Orthonormal Basis, Revisited** — Duff, Burgess, Christensen, Hery, Kensler, Liani, Villemin, JCGT 2017. [JCGT](https://jcgt.org/published/0006/01/01/) | `lib/ssr_common.slang` (`ssr_basis`), `lib/particle_common.slang`, `src/renderer/particles.cpp` |
 
 ## Transparency, particles & VFX
 
@@ -171,6 +209,8 @@ If you read only a few things, read these. They underpin most of the engine.
 | ✅ | **Hash Functions for GPU Rendering** — Jarzynski & Olano, JCGT 2020 (pcg3d). [JCGT](https://jcgt.org/published/0009/03/02/) | `lib/grass_common.slang`, `include/engine/renderer/grass.hpp` |
 | 🔧 | **Vegetation Procedural Animation and Shading in Crysis** — Sousa, GPU Gems 3 ch. 16 (2007). [online](https://developer.nvidia.com/gpugems/gpugems3/part-iii-rendering/chapter-16-vegetation-procedural-animation-and-shading-crysis) | Foliage wind (R14, #49; R13 wind field, #64) |
 | 🗺 | **GPU-Based Procedural Placement in Horizon Zero Dawn** — van Muijden, GDC 2017. [Guerrilla](https://www.guerrilla-games.com/read/gpu-based-procedural-placement-in-horizon-zero-dawn) | R14 biome placement |
+| 🔧 | **Stochastic Simplification of Aggregate Detail** — Cook, Halstead, Planck & Ryu, SIGGRAPH 2007 (Pixar): keep a random subset of the elements of foliage / fur and scale the survivors to preserve area. [Pixar](https://graphics.pixar.com/library/StochasticSimplification) | `quat-cook --simplify` card thinning, `src/cook/mesh_simplify.cpp` (#91) |
+| 🔧 | **Surface Simplification Using Quadric Error Metrics** — Garland & Heckbert, SIGGRAPH 1997; the edge-collapse metric behind meshoptimizer's simplifier (with attribute error). [CMU](https://www.cs.cmu.edu/~garland/quadrics/) | `quat-cook --simplify` solid meshes, `src/cook/mesh_simplify.cpp` (#91) |
 | 🗺 | **Octahedral Impostors** — Brucks, 2018. [shaderbits.com](https://shaderbits.com/blog/octahedral-impostors) | R14 far-field trees |
 
 ## Procedural building, curves & geometry

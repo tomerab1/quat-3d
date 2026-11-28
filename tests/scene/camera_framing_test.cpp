@@ -6,6 +6,7 @@
 #include <cmath>
 
 #include <glm/glm.hpp>
+#include <glm/gtc/constants.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <gtest/gtest.h>
 
@@ -79,6 +80,34 @@ TEST(CameraFraming, TinyBoxStaysBeyondTheNearPlane) {
     p.near_z = 0.5F;
     const glm::vec3 eye = engine::scene::frame_box(glm::vec3(0.0F), glm::vec3(0.0F), p);
     EXPECT_NEAR(glm::length(eye), 0.5F, 1e-5F);
+}
+
+// An authored camera's pose converts to the fly camera's angles: angles ->
+// a lookAt world matrix -> the same angles, up to looking straight up/down.
+TEST(CameraFraming, FlyAnglesRoundTripThroughAWorldMatrix) {
+    using engine::scene::fly_angles_from_world;
+    using engine::scene::framing_forward;
+    const glm::vec3 eye(3.0F, 2.0F, -7.0F);
+    for (const float yaw_deg : {-170.0F, -58.5F, 0.0F, 30.0F, 90.0F, 179.0F}) {
+        for (const float pitch_deg : {-89.9F, -60.0F, -5.5F, 0.0F, 25.0F, 89.0F, 89.9F}) {
+            const float yaw = glm::radians(yaw_deg);
+            const float pitch = glm::radians(pitch_deg);
+            const glm::mat4 world = glm::inverse(glm::lookAt(
+                eye, eye + framing_forward(yaw, pitch), glm::vec3(0.0F, 1.0F, 0.0F)));
+            const auto a = fly_angles_from_world(world);
+            EXPECT_NEAR(a.pitch, pitch, 1e-3F) << yaw_deg << ", " << pitch_deg;
+            const float dyaw = std::remainder(a.yaw - yaw, glm::two_pi<float>());
+            EXPECT_NEAR(dyaw, 0.0F, 2e-3F) << yaw_deg << ", " << pitch_deg;
+        }
+    }
+    // Straight down (a top view authored with another up vector): the heading
+    // comes from the right axis.
+    const glm::mat4 down = glm::inverse(
+        glm::lookAt(eye, eye - glm::vec3(0.0F, 1.0F, 0.0F), glm::vec3(0.0F, 0.0F, -1.0F)));
+    const auto a = fly_angles_from_world(down);
+    EXPECT_NEAR(a.pitch, -glm::half_pi<float>(), 1e-4F);
+    EXPECT_NEAR(std::remainder(a.yaw + glm::half_pi<float>(), glm::two_pi<float>()), 0.0F, 1e-4F)
+        << "faces -Z, like the up vector it was authored with";
 }
 
 } // namespace

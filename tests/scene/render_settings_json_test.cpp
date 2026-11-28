@@ -31,6 +31,10 @@ r::RenderSettings tuned() {
         case r::RenderSettingType::integer: v = d.default_value == d.max ? d.min : d.max; break;
         case r::RenderSettingType::number: v = d.min + (d.max - d.min) * 0.37F; break;
         case r::RenderSettingType::choice: v = d.default_value == d.max ? d.min : d.max; break;
+        case r::RenderSettingType::path:
+            (void)r::set_render_setting_text(out, d, "assets/tuned/" + std::string(d.name) +
+                                                         std::string(d.unit));
+            continue;
         }
         r::set_render_setting(out, d, v);
     }
@@ -48,12 +52,15 @@ TEST(RenderSettingsJson, EncodeDecodeRoundTripsEveryField) {
     for (const r::RenderSettingDesc& d : r::render_setting_fields()) {
         EXPECT_FLOAT_EQ(r::render_setting_value(decoded, d), r::render_setting_value(source, d))
             << d.group << "." << d.name;
+        EXPECT_EQ(r::render_setting_text(decoded, d), r::render_setting_text(source, d))
+            << d.group << "." << d.name;
         const json& v = encoded[std::string(d.group)][std::string(d.name)];
         switch (d.type) {
         case r::RenderSettingType::boolean: EXPECT_TRUE(v.is_boolean()); break;
         case r::RenderSettingType::integer: EXPECT_TRUE(v.is_number_integer()); break;
         case r::RenderSettingType::number: EXPECT_TRUE(v.is_number_float()); break;
-        case r::RenderSettingType::choice: EXPECT_TRUE(v.is_string()); break;
+        case r::RenderSettingType::choice:
+        case r::RenderSettingType::path: EXPECT_TRUE(v.is_string()); break;
         }
     }
     // One group only.
@@ -171,6 +178,10 @@ TEST(RenderSettingsJson, SchemaMirrorsTheTable) {
                 ASSERT_TRUE(f["enum"].is_array());
                 EXPECT_EQ(f["enum"].size(), d->choices.size());
                 EXPECT_TRUE(f["default"].is_string());
+            } else if (d->type == r::RenderSettingType::path) {
+                EXPECT_EQ(type, "string");
+                EXPECT_EQ(f["format"], "path");
+                EXPECT_EQ(f["extension"].get<std::string>(), d->unit);
             } else {
                 EXPECT_FLOAT_EQ(f["min"].get<float>(), d->min);
                 EXPECT_FLOAT_EQ(f["max"].get<float>(), d->max);
@@ -201,6 +212,33 @@ TEST(RenderSettingsJson, ChoiceFieldsUseNames) {
         EXPECT_TRUE(contains(result.error().message, "\"balanced\"")) << result.error().message;
         EXPECT_EQ(untouched.upscaler.mode, settings.upscaler.mode);
     }
+}
+
+} // namespace
+
+namespace {
+
+// R20: a `path` field travels as a string; strict decoding (remote) names
+// what is wrong with a bad path and changes nothing, lenient decoding (scene
+// files) clears it and keeps loading.
+TEST(RenderSettingsJson, PathFieldsAreCheckedStrings) {
+    r::RenderSettings st;
+    ASSERT_OK(s::apply_render_settings_json(
+        st, json{{"grading", {{"lut", "assets/luts/warm.cube"}, {"contrast", 1.2}}}}, true));
+    EXPECT_EQ(st.grading.lut, "assets/luts/warm.cube");
+    EXPECT_EQ(s::encode_render_settings(st, "grading")["grading"]["lut"], "assets/luts/warm.cube");
+
+    const r::RenderSettings before = st;
+    auto bad = s::apply_render_settings_json(
+        st, json{{"grading", {{"contrast", 0.5}, {"lut", "../../etc/x.cube"}}}}, true);
+    ASSERT_FALSE(bad.has_value());
+    EXPECT_TRUE(contains(bad.error().message, "grading.lut")) << bad.error().message;
+    EXPECT_TRUE(contains(bad.error().message, "..")) << bad.error().message;
+    EXPECT_FLOAT_EQ(st.grading.contrast, before.grading.contrast); // atomic
+    EXPECT_FALSE(s::apply_render_settings_json(st, json{{"grading", {{"lut", 3}}}}, true));
+
+    ASSERT_OK(s::apply_render_settings_json(st, json{{"grading", {{"lut", "/abs.cube"}}}}, false));
+    EXPECT_EQ(st.grading.lut, "");
 }
 
 } // namespace

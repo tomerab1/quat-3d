@@ -23,10 +23,12 @@
 #include <glm/glm.hpp>
 #include <vulkan/vulkan.h>
 
+#include "app/app_config.hpp"
 #include "app/fly_camera.hpp"
 #include "app/play_mode.hpp"
 #include "app/world_runtime.hpp"
 #include "engine/editor/editor.hpp"
+#include "engine/remote/world_commands.hpp" // HdriInfo
 
 struct ImDrawData;
 struct SDL_Window;
@@ -34,6 +36,9 @@ union SDL_Event;
 
 namespace engine::asset {
 class AssetManager;
+}
+namespace engine::project {
+class BuildJob;
 }
 namespace engine::renderer {
 struct RenderSettings;
@@ -71,8 +76,16 @@ struct EditorBridgeTargets {
     // Camera cut for the renderer's temporal state (R11): called after a scene
     // load and on every Play / Stop transition. May be empty.
     std::function<void()> reset_temporal;
+    // R21: the lighting environment's HDRI (the Renderer panel's file row,
+    // scene files). May be empty.
+    std::function<engine::remote::HdriInfo()> hdri_info;
+    std::function<std::expected<void, engine::core::Error>(const std::string& relative)> set_hdri;
     // Simulation clock (Pause / Step) and endpoint state for the status bar.
     RemoteBridge* remote = nullptr;
+    // Build & Export (P4/E7): the open game project (null: none) and the
+    // packaging job.
+    const OpenGame*             game = nullptr;
+    engine::project::BuildJob* build_job = nullptr;
 };
 
 class EditorBridge {
@@ -132,13 +145,19 @@ public:
                                              const engine::scene::CameraMatrices& cam);
 
 private:
+    // File > Build & Export...: resolves the project and output folder and
+    // starts quat-pack.
+    [[nodiscard]] std::expected<std::uint64_t, engine::core::Error>
+    start_export(const engine::editor::ExportRequest& request);
     void apply_scene_file_requests();
+    void apply_hdri_request();
     void apply_instantiate_request();
 
     EditorBridgeTargets              t_;
     engine::editor::EditorLayer      editor_;
     std::string startup_select_;      // QUAT_EDITOR_SELECT, applied on the first frame
     std::string pending_instantiate_; // set by the asset browser, consumed below
+    std::optional<std::string> pending_hdri_; // R21: the Renderer panel's HDRI request
     bool        new_scene_ = false;   // File > New
     std::string pending_save_;        // scene file requests from the File menu
     std::string pending_load_;

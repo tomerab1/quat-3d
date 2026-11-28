@@ -3,6 +3,8 @@
 // Private helpers shared by the world-command translation units
 // (src/remote/world/*.cpp). See include/engine/remote/world_commands.hpp.
 
+#include <cstdint>
+#include <expected>
 #include <memory>
 #include <optional>
 #include <string>
@@ -14,6 +16,7 @@
 
 #include "engine/asset/mesh_asset.hpp" // Aabb
 #include "engine/core/json_fields.hpp"
+#include "engine/physics/physics_world.hpp"
 #include "engine/remote/rpc_server.hpp"
 #include "engine/remote/world_commands.hpp"
 
@@ -164,12 +167,37 @@ void register_debug_query_commands(RpcServer& server, const ContextPtr& ctx);
 void register_tuning_commands(RpcServer& server, const ContextPtr& ctx);
 void register_behavior_commands(RpcServer& server, const ContextPtr& ctx);
 void register_behavior_edit_commands(RpcServer& server, const ContextPtr& ctx);
+void register_physics_commands(RpcServer& server, const ContextPtr& ctx);
+void register_physics_body_commands(RpcServer& server, const ContextPtr& ctx);
+void register_physics_query_commands(RpcServer& server, const ContextPtr& ctx);
+void register_weather_commands(RpcServer& server, const ContextPtr& ctx);
+void register_project_commands(RpcServer& server, const ContextPtr& ctx);
 void register_script_commands(RpcServer& server, const ContextPtr& ctx);
+void register_profile_commands(RpcServer& server, const ContextPtr& ctx);
 void register_shader_commands(RpcServer& server, const ContextPtr& ctx);
+void register_time_commands(RpcServer& server, const ContextPtr& ctx);
 void register_input_commands(RpcServer& server, const ContextPtr& ctx);
 void register_camera_rig_commands(RpcServer& server, const ContextPtr& ctx);
 
 // {paused, time_scale, pending_steps, steps_run, sim_frames, sim_time_s}.
 [[nodiscard]] Json sim_clock_json(const core::SimClock& clock);
+
+// ---- Physics (A10.1) -------------------------------------------------------------
+
+// The running physics world (services.physics_control), or `unavailable`
+// with a hint to start play mode.
+[[nodiscard]] std::expected<physics::PhysicsWorld*, RpcError> running_physics(const Context& ctx);
+
+// "static" / "dynamic" / "character" / "trigger" / "sensor".
+[[nodiscard]] std::string_view layer_name(physics::Layer layer);
+
+// Parses a `layers` parameter (array of layer names) into a physics layer
+// mask; absent / null keeps `mask`.
+[[nodiscard]] std::expected<void, RpcError> read_layer_mask(const Json* layers,
+                                                            std::uint32_t& mask);
+
+// {entity, name} of a body / character owner (entity null for unowned
+// bodies such as terrain).
+void put_owner(const entt::registry& registry, std::uint32_t owner, Json& out);
 
 } // namespace engine::remote::world

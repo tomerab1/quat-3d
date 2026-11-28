@@ -1,9 +1,11 @@
 // FrameRenderer, per frame: gathers the ticked scene into draw lists and builds
 // the render graph. Pass order (graph declaration order):
-//   sky-view LUT update, dynamic IBL step, GBuffer, terrain, grass,
-//   background velocity, Hi-Z, cascaded shadows (GPU fit + cascades), GTAO,
-//   light culling, lighting, transparent, particles (all at the render
-//   extent), upscaler (render -> display extent), bloom, exposure, tonemap,
+//   sky-view LUT update, HDRI bake or dynamic IBL step, wind field, GBuffer,
+//   terrain, grass, background velocity, Hi-Z, cascaded shadows (GPU fit +
+//   cascades), GTAO, screen-space reflections, light culling, cloud shadow
+//   map, lighting, transparent, particles, reflection colour copy (all at
+//   the render extent), upscaler (render -> display extent), depth of field,
+//   motion blur (R20, frame_post.cpp), bloom, exposure, tonemap / grade,
 //   present copy, editor UI; GPU skinning is recorded before the graph
 //   executes.
 
@@ -21,6 +23,7 @@
 
 #include "engine/asset/material_asset.hpp"
 #include "engine/asset/mesh_asset.hpp"
+#include "engine/core/profile.hpp"
 #include "engine/renderer/ibl_pass.hpp"
 #include "engine/renderer/terrain_pass.hpp"
 #include "engine/rhi/device.hpp"
@@ -29,15 +32,19 @@
 #include "engine/scene/instanced_mesh.hpp"
 #include "engine/scene/scene.hpp"
 #include "engine/scene/material_override.hpp"
+#include "engine/renderer/weather_surfaces.hpp"
+#include "engine/scene/weather_frame.hpp"
 
 namespace quat::app {
 namespace {
 
 #ifdef ENGINE_EDITOR
 // (Re)creates the slot's offscreen viewport image at `extent`. Safe to replace
-// here: the slot's fence was waited before its frame is rebuilt. The image uses
-// the swapchain format so the TAA resolve copy and the UI's sRGB sampling
-// behave exactly as the direct-to-swapchain path.
+// here: the slot's fence was waited before its frame is rebuilt. The image is
+// in the LDR (UNORM) format: TAA copies the tonemapped, already sRGB-encoded
+// bytes into it as into the swapchain, and the UI samples those bytes
+// undecoded and blends them in gamma space (issue #92), so the Viewport panel
+// shows exactly the bytes the game view presents.
 bool ensure_viewport_target(DeferredFrame& frame, const engine::rhi::Device& device,
                             engine::rhi::GpuAllocator& allocator, VkFormat format,
                             VkExtent2D extent) {
@@ -118,9 +125,16 @@ SkinnedEntityGpu* ensure_skin_gpu(DeferredFrame& frame, entt::entity entity,
 } // namespace
 
 engine::renderer::CloudSettings FrameRenderer::current_clouds() const {
-    engine::renderer::CloudSettings c = settings_.clouds;
-    c.time_s = cloud_time_s_;
-    return c;
+    return engine::scene::frame_clouds(settings_.clouds, cloud_time_s_,
+                                       has_weather_ ? &weather_ : nullptr, cloud_drift_km_,
+                                       camera_pos_);
+}
+
+void FrameRenderer::advance_time(float dt) {
+    cloud_time_s_ += dt;
+    if (has_weather_) {
+        cloud_drift_km_ += engine::scene::cloud_wind(weather_, settings_.clouds) * (dt * 0.001F);
+    }
 }
 
 engine::renderer::CsmSettings FrameRenderer::current_csm() const {
@@ -138,6 +152,7 @@ engine::renderer::ContactShadowSettings FrameRenderer::current_contact_shadows()
 FrameScene FrameRenderer::gather(engine::scene::Scene& scene,
                                  const engine::scene::CameraMatrices& cam,
                                  VkExtent2D draw_extent, std::uint64_t frame_number) {
+    QUAT_ZONE_N("scene_gather");
     const VkDevice vk_device = device_->handle();
     engine::rhi::GpuAllocator& allocator = *allocator_;
     DeferredFrame& fr = frames_[frame_];
@@ -154,6 +169,7 @@ FrameScene FrameRenderer::gather(engine::scene::Scene& scene,
         light.color = glm::vec4(dl.color, dl.intensity);
         break;
     }
+    apply_hdri_sun(light); // R21: the HDRI's own sun, when selected
 
     // Gather point lights from the ECS (world position from Transform); the
     // light-cull compute pass bins them into view clusters on the GPU.
@@ -259,10 +275,17 @@ FrameScene FrameRenderer::gather(engine::scene::Scene& scene,
     out.shadow_cull_view_proj = engine::renderer::caster_cull_view_proj(
         out.csm_view, current_csm(), engine::renderer::shadow_map_size);
     out.frame_number = frame_number;
+
+    // R13.1: the weather this frame renders.
+    out.has_weather = engine::scene::frame_weather(scene.registry(), out.weather);
+    weather_ = out.weather;
+    has_weather_ = out.has_weather;
+    camera_pos_ = cam.position;
     return out;
 }
 
 bool FrameRenderer::record(const FrameInputs& in) {
+    QUAT_ZONE_N("record_frame");
     const engine::rhi::Device& device = *device_;
     engine::rhi::GpuAllocator& allocator = *allocator_;
     engine::rhi::Swapchain& swapchain = *swapchain_;
@@ -290,26 +313,39 @@ bool FrameRenderer::record(const FrameInputs& in) {
     // Sky + environment upkeep, declared FIRST so their trailing barriers
     // precede every consumer this frame (the graph keeps declaration order
     // for independent passes). The sky-view LUT recomputes in-graph when
-    // the sun moved (no pipeline stall on sun drags); the dynamic IBL
-    // probe advances one step per frame and flips when a cycle completes.
+    // the sun moved (no pipeline stall on sun drags); the environment maps
+    // are the HDRI's (baked when its inputs change) or the dynamic IBL
+    // probe's (one step per frame, flipping when a cycle completes).
     const glm::vec3 sun_to = glm::vec3(fs.light.direction);
     if (atmosphere_) {
         if (auto r = atmosphere_->add_skyview_update_to_graph(graph, sun_to); !r) {
             std::fprintf(stderr, "[warn] sky-view update: %s\n", r.error().message.c_str());
         }
     }
-    if (dynamic_ibl_) {
-        engine::renderer::IblCycleParams cycle{};
-        cycle.sun_to = sun_to;
-        cycle.skyview = atmos_skyview();
-        cycle.transmittance = atmos_transmittance();
-        cycle.clouds = current_clouds();
-        if (auto r = dynamic_ibl_->add_step_to_graph(graph, cycle); !r) {
-            std::fprintf(stderr, "[warn] ibl step: %s\n", r.error().message.c_str());
+    const EnvironmentMaps environment = add_environment(graph, sun_to);
+    const engine::renderer::IblViewSet ibl_views = environment.ibl;
+
+    // R13.1: with weather, the global wind field around the camera (grass
+    // samples it), advanced by simulated time so pausing freezes the wind
+    // with the world. Without weather nothing runs: grass keeps its R9.3 sway.
+    wind_clock_.advance(engine::weather::sanitized(fs.weather).wind_speed, in.sim_dt);
+    // Last frame's field is evaluated too, so grass motion vectors (R11)
+    // carry the gusts sweeping through, not only the flutter.
+    engine::renderer::WindFieldOutput wind{};
+    if (fs.has_weather && fr.wind.valid()) {
+        const engine::weather::WindFieldParams wind_params =
+            engine::weather::wind_field_params(fs.weather, wind_clock_);
+        if (auto w = fr.wind.add_to_graph(graph, wind_params,
+                                          glm::vec2(cam.position.x, cam.position.z),
+                                          prev_wind_params_)) {
+            wind = *w;
+        } else {
+            std::fprintf(stderr, "[warn] wind field: %s\n", w.error().message.c_str());
         }
+        prev_wind_params_ = wind_params;
+    } else {
+        prev_wind_params_.reset(); // weather (re)appearing starts without field motion
     }
-    const engine::renderer::IblViewSet ibl_views =
-        dynamic_ibl_ ? dynamic_ibl_->views() : engine::renderer::IblViewSet{};
 
     // R9.1: draws sharing mesh + material collapse into instanced draws;
     // R9.2: InstancedMesh placements join them, one draw per (mesh,
@@ -334,7 +370,8 @@ bool FrameRenderer::record(const FrameInputs& in) {
     }
     if (in.grass != nullptr) {
         in.grass->add_to_graph(graph, frame_, *in.registry, *gbuffer, render_extent,
-                               fs.jittered_vp, cam, in.terrain, in.terrain_anchor, in.sim_dt);
+                               fs.jittered_vp, cam, in.terrain, in.terrain_anchor, in.sim_dt,
+                               wind);
     }
     // R11: camera-only velocity where no geometry was drawn (after every
     // opaque writer).
@@ -347,6 +384,7 @@ bool FrameRenderer::record(const FrameInputs& in) {
     // shadow casters only when the cascades are rendered).
     draw_count_ = engine::scene::frame_draw_count(batches, fs.transparent_draws.size()) -
                   (csm.enabled ? 0 : shadow_batches.draws.size());
+    plot_frame_counters(engine::scene::frame_draw_stats(batches, fs.transparent_draws, csm.enabled));
     engine::renderer::HiZTargets hiz{};
     if (fr.hiz.valid()) {
         if (auto h = fr.hiz.add_to_graph(graph, gbuffer->depth, render_extent)) {
@@ -381,6 +419,10 @@ bool FrameRenderer::record(const FrameInputs& in) {
             std::fprintf(stderr, "[warn] gtao pass: %s\n", ao.error().message.c_str());
         }
     }
+    // R21: screen-space reflections over the environment (Hi-Z traced).
+    const engine::rhi::ResourceHandle reflections =
+        hiz.valid() ? add_reflections(graph, fs, *gbuffer, hiz, cam.position)
+                    : engine::rhi::ResourceHandle{};
     occlusion.contact = current_contact_shadows();
     occlusion.projection = cam.projection;
     occlusion.frame_index = static_cast<std::uint32_t>(fs.frame_number);
@@ -393,12 +435,30 @@ bool FrameRenderer::record(const FrameInputs& in) {
     } else {
         std::fprintf(stderr, "[warn] light cull: %s\n", c.error().message.c_str());
     }
+    // R13.1: with weather, the cloud shadow map (one compute pass; the
+    // lighting pass samples it). Needs the atmosphere's cloud layer.
+    const engine::renderer::CloudSettings clouds = current_clouds();
+    engine::renderer::CloudShadowMap cloud_shadow{};
+    if (fs.has_weather && atmosphere_ && clouds.enabled && clouds.shadows &&
+        fr.cloud_shadow.valid()) {
+        if (auto m = fr.cloud_shadow.add_to_graph(graph, sun_to, cam.position, clouds)) {
+            cloud_shadow = *m;
+        } else {
+            std::fprintf(stderr, "[warn] cloud shadow map: %s\n", m.error().message.c_str());
+        }
+    }
+    // R21 terms (frame_environment.cpp) plus the R13.1 weather surfaces and
+    // cloud shadows.
+    engine::renderer::LightingTuning tuning =
+        lighting_tuning(reflections, environment.background);
+    tuning.weather = engine::renderer::WeatherSurfaces::from(
+        fs.weather,
+        in.terrain != nullptr ? in.terrain_snowline : engine::renderer::k_no_snowline_m);
+    tuning.cloud_shadow = cloud_shadow;
     auto hdr = fr.lighting.add_to_graph(graph, *gbuffer, render_extent, fs.light,
                                         fs.jittered_inv_vp, cam.position, occlusion, clustered,
                                         /*enable_sky=*/true, ibl_views, atmos_skyview(),
-                                        atmos_transmittance(), current_clouds(),
-                                        engine::renderer::LightingTuning{
-                                            .ibl_intensity = settings.ibl.intensity});
+                                        atmos_transmittance(), clouds, tuning);
     if (!hdr) {
         std::fprintf(stderr, "[fatal] lighting pass: %s\n", hdr.error().message.c_str());
         return false;
@@ -423,6 +483,8 @@ bool FrameRenderer::record(const FrameInputs& in) {
                                    {frame_, &*gbuffer, *hdr, &clustered, &cam, fs.jittered_vp,
                                     fs.light, render_extent, in.sim_dt});
     }
+    // R21: this frame's lit HDR is what next frame's reflections show.
+    add_reflection_color(graph, *hdr);
     // R11: temporal resolve / upscale of the pre-tonemap HDR to the display
     // extent (frame_temporal.cpp); post-processing runs on its output.
     auto upscaled = add_upscale(graph, fs, *hdr, *gbuffer, draw_extent);
@@ -431,6 +493,8 @@ bool FrameRenderer::record(const FrameInputs& in) {
         return false;
     }
     hdr = *upscaled;
+    // R20: depth of field and motion blur on the resolved display image.
+    hdr = add_cinematic_post(graph, in, *gbuffer, *hdr);
     // Bloom: blur the bright parts of the HDR and add them back before tonemap.
     if (settings.bloom.enabled) {
         const engine::renderer::BloomParams bloom_params{
@@ -464,6 +528,12 @@ bool FrameRenderer::record(const FrameInputs& in) {
         // render-finished semaphore is signalled at, which present waits
         // on (issue #9).
         k_present_signal_stage);
+    // The UI blends in gamma space through the swapchain's UNORM view when
+    // the swapchain is mutable-format (ImGuiPass copies through a UNORM
+    // scratch image otherwise).
+    if (const auto unorm_views = swapchain.unorm_image_views(); !unorm_views.empty()) {
+        graph.set_unorm_view(backbuffer, unorm_views[image_index]);
+    }
     // In editor mode the frame resolves into the slot's offscreen viewport
     // image (sampled by the Viewport panel); otherwise straight into the
     // swapchain as before.
@@ -471,13 +541,13 @@ bool FrameRenderer::record(const FrameInputs& in) {
 #ifdef ENGINE_EDITOR
     engine::rhi::ResourceHandle viewport_handle{};
     if (editor_active_) {
-        if (!ensure_viewport_target(fr, device, allocator, swapchain.format(), draw_extent)) {
+        if (!ensure_viewport_target(fr, device, allocator, ldr_format_, draw_extent)) {
             std::fprintf(stderr, "[fatal] viewport target creation failed\n");
             return false;
         }
         viewport_handle = graph.import_image(
             "viewport", fr.viewport_image.handle(), fr.viewport_view.handle(),
-            swapchain.format(), draw_extent, VK_IMAGE_LAYOUT_UNDEFINED,
+            ldr_format_, draw_extent, VK_IMAGE_LAYOUT_UNDEFINED,
             VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         scene_target = viewport_handle;
     }
@@ -493,7 +563,7 @@ bool FrameRenderer::record(const FrameInputs& in) {
             VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
     if (auto r = fr.tonemap.add_to_graph(graph, *hdr, ldr_current, draw_extent,
                                          fr.exposure.exposure_buffer_address(),
-                                         settings.exposure);
+                                         settings.exposure, tonemap_look(in, fr));
         !r) {
         std::fprintf(stderr, "[fatal] tonemap pass: %s\n", r.error().message.c_str());
         return false;
@@ -532,12 +602,16 @@ bool FrameRenderer::record(const FrameInputs& in) {
     // Skin (compute) before the graph; record() adds the compute -> vertex
     // fetch barrier so the GBuffer sees the skinned vertices.
     if (!fs.dispatches.empty()) {
+        QUAT_ZONE_C("skinning", engine::core::ProfileCategory::pass);
+        static const engine::core::ProfileNameId skinning_zone =
+            engine::core::intern_profile_name("skinning", engine::core::ProfileCategory::pass);
+        const engine::rhi::GpuZoneScope gpu_zone(&gpu_profiler_, cmd, skinning_zone, "skinning");
         if (auto rs = fr.skinning.record(cmd, fs.dispatches); !rs) {
             std::fprintf(stderr, "[fatal] skinning pass: %s\n", rs.error().message.c_str());
             return false;
         }
     }
-    graph.execute(cmd);
+    graph.execute(cmd, &gpu_profiler_);
     return true;
 }
 

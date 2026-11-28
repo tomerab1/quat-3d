@@ -11,8 +11,10 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
 
+#include "engine/core/event_ring.hpp"
 #include "engine/physics/physics_world.hpp"
 #include "engine/scene/components.hpp"
+#include "engine/scene/physics_settings.hpp"
 #include "engine/terrain/generator.hpp"
 #include "engine/scene/scene.hpp"
 
@@ -92,13 +94,21 @@ std::uint32_t ensure_rigid_body(entt::registry& registry, physics::PhysicsWorld&
                    : rb->motion == BodyMotion::static_body ? physics::Layer::static_body
                                                            : physics::Layer::dynamic;
     params.mass = rb->mass;
+    params.friction = rb->friction;
+    params.restitution = rb->restitution;
+    params.gravity_factor = rb->gravity_factor;
+    params.linear_damping = rb->linear_damping;
+    params.angular_damping = rb->angular_damping;
     params.owner = static_cast<std::uint32_t>(entt::to_integral(e));
     rb->body = world.add_body(params);
+    // The body owns its shape; a shape that backs no body is given back.
+    if (rb->body == physics::PhysicsWorld::invalid_body) world.release_shape(params.shape);
     return rb->body;
 }
 
 void physics_system(entt::registry& registry, physics::PhysicsWorld& world, float dt) {
     const std::uint32_t invalid = physics::PhysicsWorld::invalid_body;
+    world.set_gravity(physics_settings(registry).gravity); // the scene's one setting
 
     // 0. Remove bodies whose owner is gone: the entity was destroyed, or it
     // lost its RigidBody / Collider (editor delete or remove-component during
@@ -118,6 +128,9 @@ void physics_system(entt::registry& registry, physics::PhysicsWorld& world, floa
     for (auto [e, rb, col, t] : registry.view<RigidBody, Collider, Transform>().each()) {
         if (rb.body == invalid) (void)ensure_rigid_body(registry, world, e);
     }
+
+    // 1b. Joints between the (possibly just rebuilt) bodies.
+    joint_system(registry, world);
 
     // 2. Push kinematic bodies' transforms into the simulation.
     for (auto [e, rb, col, t] : registry.view<RigidBody, Collider, Transform>().each()) {
@@ -149,19 +162,88 @@ void physics_system(entt::registry& registry, physics::PhysicsWorld& world, floa
     }
 }
 
+void publish_physics_events(const physics::PhysicsWorld& world, core::EventRing& ring) {
+    using Kind = physics::PhysicsWorld::ContactEvent::Kind;
+    const auto entity_of = [](std::uint32_t owner) {
+        // Owners are entity ids (physics_system / character_system pass
+        // entt::to_integral); unowned bodies are terrain or demo floors.
+        return owner == physics::PhysicsWorld::no_owner ? core::Event::no_entity : owner;
+    };
+    const double dt = physics::PhysicsWorld::fixed_timestep;
+    for (const physics::PhysicsWorld::ContactEvent& c : world.contact_events()) {
+        core::Event ev;
+        switch (c.kind) {
+        case Kind::contact_added:
+            ev.kind = core::EventKind::contact_added;
+            break;
+        case Kind::contact_removed:
+            ev.kind = core::EventKind::contact_removed;
+            break;
+        case Kind::trigger_enter:
+            ev.kind = core::EventKind::trigger_enter;
+            break;
+        case Kind::trigger_exit:
+            ev.kind = core::EventKind::trigger_exit;
+            break;
+        }
+        ev.time_s = static_cast<double>(c.step) * dt;
+        ev.entity_a = entity_of(c.owner_a);
+        ev.entity_b = entity_of(c.owner_b);
+        ev.point = {c.point.x, c.point.y, c.point.z};
+        ev.normal = {c.normal.x, c.normal.y, c.normal.z};
+        ev.impulse = c.impulse;
+        ring.push(ev);
+    }
+    if (const std::uint32_t lost = world.dropped_contact_events(); lost > 0) ring.drop(lost);
+}
+
 namespace {
+
+// Remote driving (character.move): walk towards a target point, stop when a
+// timed walk runs out. Writes `move` like a player's input would.
+void steer_character(CharacterController& cc, const glm::vec3& position, float dt) {
+    if (cc.has_move_target) {
+        const glm::vec2 to(cc.move_target.x - position.x, cc.move_target.z - position.z);
+        const float dist = glm::length(to);
+        const float step = cc.speed * dt;
+        if (dist <= 0.02F || cc.speed <= 0.0F) {
+            cc.move = glm::vec3(0.0F);
+            cc.has_move_target = false; // arrived
+        } else {
+            // Slow down on the last step instead of overshooting.
+            const float scale = step > dist ? dist / step : 1.0F;
+            cc.move = glm::vec3(to.x / dist, 0.0F, to.y / dist) * scale;
+        }
+    }
+    if (cc.move_time_left >= 0.0F) {
+        cc.move_time_left -= dt;
+        if (cc.move_time_left <= 0.0F) {
+            cc.move = glm::vec3(0.0F);
+            cc.has_move_target = false;
+            cc.move_time_left = -1.0F;
+        }
+    }
+}
 
 void advance_character(entt::registry& registry, entt::entity e, CharacterController& cc,
                        const Transform& t, physics::PhysicsWorld& world, float dt) {
-    constexpr float gravity = -9.81F;
+    // Characters stand along +Y: they fall with the vertical component of the
+    // world gravity (the scene's PhysicsSettings, shared with Jolt).
+    const float gravity = world.gravity().y;
     if (cc.character == physics::PhysicsWorld::invalid_body) {
         cc.character = world.create_character(cc.half_height, cc.radius, position_of(t),
                                               static_cast<std::uint32_t>(entt::to_integral(e)));
     }
 
+    steer_character(cc, world.character_position(cc.character), dt);
+
     glm::vec3 velocity = cc.velocity;
-    if (cc.on_ground && velocity.y < 0.0F) {
-        velocity.y = 0.0F; // grounded: stop accumulating downward speed
+    if (cc.on_ground && velocity.y * gravity > 0.0F) {
+        velocity.y = 0.0F; // grounded: stop accumulating speed along gravity
+    }
+    if (cc.jump_speed > 0.0F) { // one request, honoured only from the ground
+        if (cc.on_ground) velocity.y = gravity <= 0.0F ? cc.jump_speed : -cc.jump_speed;
+        cc.jump_speed = 0.0F;
     }
     velocity.y += gravity * dt;
     velocity.x = cc.move.x * cc.speed;
@@ -182,6 +264,7 @@ void advance_character(entt::registry& registry, entt::entity e, CharacterContro
 } // namespace
 
 void character_system(entt::registry& registry, physics::PhysicsWorld& world, float dt) {
+    world.set_gravity(physics_settings(registry).gravity);
     // Remove characters whose entity or CharacterController is gone (see
     // physics_system step 0).
     for (const physics::PhysicsWorld::OwnedBody& oc : world.owned_characters()) {
@@ -200,6 +283,7 @@ void character_system(entt::registry& registry, physics::PhysicsWorld& world, fl
 void step_character(entt::registry& registry, physics::PhysicsWorld& world, entt::entity e,
                     float dt) {
     if (!registry.valid(e)) return;
+    world.set_gravity(physics_settings(registry).gravity);
     auto* cc = registry.try_get<CharacterController>(e);
     auto* t = registry.try_get<Transform>(e);
     if (cc == nullptr || t == nullptr) return;
@@ -236,7 +320,9 @@ std::uint32_t add_height_field_body(physics::PhysicsWorld& world, const terrain:
     params.position = origin;
     params.motion = physics::Motion::static_body;
     params.layer = physics::Layer::static_body;
-    return world.add_body(params);
+    const std::uint32_t body = world.add_body(params);
+    if (body == physics::PhysicsWorld::invalid_body) world.release_shape(shape);
+    return body; // removing the body releases its height field
 }
 
 void collect_nav_geometry(entt::registry& registry, const terrain::Heightmap* map,

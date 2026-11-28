@@ -1,7 +1,9 @@
 // render.settings.* and material.* (A8) against a real Scene and a
 // RenderSettings standing in for the renderer's.
 
+#include <expected>
 #include <string>
+#include <vector>
 
 #include <gtest/gtest.h>
 
@@ -10,6 +12,7 @@
 #include "engine/renderer/render_settings.hpp"
 #include "engine/scene/material_override.hpp"
 #include "remote/world_fixture.hpp"
+#include "support/temp_dir.hpp"
 
 namespace {
 
@@ -112,6 +115,73 @@ TEST_F(WorldTuning, EnvironmentCloudsShareTheRenderSettings) {
                     0.7F);
     ok("render.settings.set", {{"clouds", {{"density", 40}}}});
     EXPECT_FLOAT_EQ(ok("environment.get")["clouds"]["density"].get<float>(), 40.0F);
+}
+
+// R21: a fake HDRI loader behind services.set_hdri / hdri_info.
+class WorldHdri : public quat::test::WorldCommands {
+protected:
+    r::RenderSettings          settings;
+    quat::test::TempDir        root{"hdri_root"};
+    std::vector<std::string>   requested;
+    engine::remote::HdriInfo   info;
+    void SetUp() override {
+        services.render_settings = &settings;
+        services.project_root = [this] { return root.path(); };
+        services.hdri_info = [this] { return info; };
+        services.set_hdri = [this](const std::string& relative)
+            -> std::expected<void, engine::core::Error> {
+            requested.push_back(relative);
+            if (relative == "hdri-cache/broken.hdr") {
+                return std::unexpected(engine::core::Error{"hdr decode: corrupt"});
+            }
+            info.path = relative;
+            info.loaded = !relative.empty();
+            return {};
+        };
+        register_commands();
+    }
+};
+
+// The sky source and the HDRI's look are the `environment` settings group;
+// the file goes to services.set_hdri, confined to the project root, and a
+// failed load (or a bad field) changes nothing.
+TEST_F(WorldHdri, EnvironmentHdriSelectsAndLoads) {
+
+    Json out = ok("environment.set", {{"sky", "hdri"},
+                                      {"hdri", {{"path", "hdri-cache/sky.hdr"}, {"rotation_deg", 90},
+                                                {"intensity", 2}, {"sun", false}}}});
+    EXPECT_EQ(requested, std::vector<std::string>{"hdri-cache/sky.hdr"});
+    EXPECT_EQ(settings.environment.source, static_cast<int>(r::SkySource::hdri));
+    EXPECT_FLOAT_EQ(settings.environment.hdri_rotation_deg, 90.0F);
+    EXPECT_FLOAT_EQ(settings.environment.hdri_intensity, 2.0F);
+    EXPECT_FALSE(settings.environment.hdri_sun);
+    EXPECT_EQ(out["sky"], "hdri");
+    EXPECT_EQ(out["hdri"]["path"], "hdri-cache/sky.hdr");
+    EXPECT_EQ(out["hdri"]["loaded"], true);
+    EXPECT_FLOAT_EQ(out["hdri"]["rotation_deg"].get<float>(), 90.0F);
+    EXPECT_FLOAT_EQ(
+        ok("render.settings.get", {{"group", "environment"}})["environment"]["hdri_intensity"]
+            .get<float>(),
+        2.0F);
+
+    // Escaping the project root, a bad field and a failed decode change nothing.
+    std::string msg = err("environment.set", {{"sky", "procedural"}, {"hdri", {{"path", "../x.hdr"}}}},
+                          code::invalid_params);
+    EXPECT_TRUE(contains(msg, "escapes the project root")) << msg;
+    err("environment.set", {{"hdri", {{"rotation_deg", 999}}}}, code::invalid_params);
+    err("environment.set", {{"hdri", {{"exposure", 1}}}}, code::invalid_params);
+    err("environment.set", {{"sky", "space"}}, code::invalid_params);
+    msg = err("environment.set", {{"sky", "procedural"}, {"hdri", {{"path", "hdri-cache/broken.hdr"}}}},
+              code::invalid_params);
+    EXPECT_TRUE(contains(msg, "corrupt")) << msg;
+    EXPECT_EQ(settings.environment.source, static_cast<int>(r::SkySource::hdri));
+    EXPECT_FLOAT_EQ(settings.environment.hdri_rotation_deg, 90.0F);
+    EXPECT_EQ(info.path, "hdri-cache/sky.hdr");
+
+    // An empty path (or null) clears the file.
+    ok("environment.set", {{"hdri", {{"path", nullptr}}}});
+    EXPECT_EQ(requested.back(), "");
+    EXPECT_TRUE(ok("environment.get")["hdri"]["path"].is_null());
 }
 
 TEST_F(WorldTuning, MaterialOfAPrimitive) {

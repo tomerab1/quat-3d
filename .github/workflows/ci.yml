@@ -64,9 +64,12 @@ jobs:
         with:
           extra-apt-packages: xvfb
 
+      # The release preset compiles the Tracy client in (ENGINE_PROFILE=ON,
+      # on demand: it costs nothing without a viewer), so the tests run with
+      # it; the no-editor game below keeps ENGINE_PROFILE=OFF compiling.
       - name: Configure
         id: configure
-        run: cmake --preset release -DENGINE_PROFILE=OFF
+        run: cmake --preset release
 
       # Saved right after configure (where vcpkg builds the dependencies) and
       # even when configure fails, so neither a dependency failure nor a later
@@ -93,16 +96,81 @@ jobs:
           export VK_ICD_FILENAMES="$icd"
           ctest --test-dir build/release --output-on-failure --timeout 900
 
-      # The game without the editor layer compiles other code paths (it broke
-      # once unnoticed). Shares the release build's vcpkg_installed tree, so
-      # no dependency is rebuilt; only the `game` target is built.
-      - name: Build game without the editor (ENGINE_EDITOR=OFF)
+      # The game without the editor layer (and without Tracy) compiles other
+      # code paths (it broke once unnoticed). Shares the release build's vcpkg_installed tree, so
+      # no dependency is rebuilt; only the `game` target is built. Manifest
+      # install is off: with ENGINE_PROFILE=OFF the manifest no longer asks
+      # for the `profiling` feature, and an install would remove Tracy from
+      # the shared tree under the release build.
+      - name: Build game without the editor (ENGINE_EDITOR=OFF, ENGINE_PROFILE=OFF)
         if: ${{ !cancelled() && steps.configure.outcome == 'success' }}
         run: |
           cmake --preset release -B build/release-noeditor \
-            -DENGINE_PROFILE=OFF -DENGINE_EDITOR=OFF \
+            -DENGINE_PROFILE=OFF -DENGINE_EDITOR=OFF -DVCPKG_MANIFEST_INSTALL=OFF \
             -DVCPKG_INSTALLED_DIR="${{ github.workspace }}/build/release/vcpkg_installed"
           cmake --build build/release-noeditor --target game
+
+      # CC0 Poly Haven assets of the showcase scenes (assets/showcase/*/assets.json),
+      # downloaded and cooked with this build's quat-cook. Two caches: the
+      # downloads (keyed on the manifests, which pin each asset's content, and
+      # the fetch script) and the cooked GLBs (also keyed on the cooker
+      # sources), so a cooker change re-cooks without re-downloading ~560 MB.
+      # Most runs only verify checksums. A Poly Haven outage or a slow cook
+      # does not fail the job (continue-on-error, timeout): ci-screenshots.sh
+      # then skips the scenes whose assets are missing.
+      - name: Restore showcase downloads
+        id: showcase-downloads
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            assets/meshes/polyhaven
+            !assets/meshes/polyhaven/*/*.glb
+            !assets/meshes/polyhaven/*/*.cook-stamp
+            assets/textures/polyhaven
+            assets/hdri/polyhaven
+          key: showcase-downloads-${{ hashFiles('assets/showcase/**/assets.json', 'scripts/fetch-polyhaven.py') }}
+
+      - name: Restore showcase cooked models
+        id: showcase-cooked
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            assets/meshes/polyhaven/*/*.glb
+            assets/meshes/polyhaven/*/*.cook-stamp
+          key: showcase-cooked-${{ hashFiles('assets/showcase/**/assets.json', 'src/cook/**', 'include/engine/cook/**', 'tools/quat-cook/**') }}
+
+      - name: Fetch showcase assets
+        id: showcase-fetch
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        continue-on-error: true
+        timeout-minutes: 25
+        run: |
+          for manifest in assets/showcase/*/assets.json; do
+            python3 scripts/fetch-polyhaven.py "$manifest" --cook-with build/release/quat-cook
+          done
+
+      - name: Save showcase downloads
+        if: ${{ !cancelled() && steps.showcase-fetch.outcome == 'success' && steps.showcase-downloads.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            assets/meshes/polyhaven
+            !assets/meshes/polyhaven/*/*.glb
+            !assets/meshes/polyhaven/*/*.cook-stamp
+            assets/textures/polyhaven
+            assets/hdri/polyhaven
+          key: ${{ steps.showcase-downloads.outputs.cache-primary-key }}
+
+      - name: Save showcase cooked models
+        if: ${{ !cancelled() && steps.showcase-fetch.outcome == 'success' && steps.showcase-cooked.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            assets/meshes/polyhaven/*/*.glb
+            assets/meshes/polyhaven/*/*.cook-stamp
+          key: ${{ steps.showcase-cooked.outputs.cache-primary-key }}
 
       # Real engine frames on lavapipe under Xvfb (scripts/ci-screenshots.sh),
       # also when the tests failed. continue-on-error is TEMPORARY, until the

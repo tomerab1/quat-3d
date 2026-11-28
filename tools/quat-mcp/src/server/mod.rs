@@ -15,6 +15,12 @@ mod bt_outline;
 mod debug_tools;
 #[allow(clippy::doc_markdown)]
 mod input_tools;
+#[allow(clippy::doc_markdown)]
+mod physics;
+#[allow(clippy::doc_markdown)]
+mod profile_tools;
+#[allow(clippy::doc_markdown)]
+mod project_tools;
 mod results;
 #[allow(clippy::doc_markdown)]
 mod scene_tools;
@@ -25,7 +31,11 @@ mod shader_tools;
 #[allow(clippy::doc_markdown)]
 mod sim_tools;
 #[allow(clippy::doc_markdown)]
+mod time_tools;
+#[allow(clippy::doc_markdown)]
 mod tuning_tools;
+#[allow(clippy::doc_markdown)]
+mod weather_tools;
 #[allow(clippy::doc_markdown)]
 mod world_tools;
 
@@ -135,11 +145,16 @@ impl QuatServer {
             + Self::world_tools()
             + Self::sim_tools()
             + Self::debug_tools()
+            + Self::profile_tools()
             + Self::tuning_tools()
             + Self::behavior_tools()
+            + Self::physics_tools()
+            + Self::weather_tools()
             + Self::script_tools()
             + Self::asset_tools()
             + Self::shader_tools()
+            + Self::project_tools()
+            + Self::time_tools()
             + Self::input_tools()
     }
 
@@ -174,11 +189,13 @@ impl QuatServer {
             .await?;
         // The sky may be unavailable (headless engine); the summary still works.
         let environment = self.engine.call("environment.get", None).await.ok();
+        let weather = self.engine.call("weather.get", None).await.ok();
         let camera = self.engine.call("camera.get", None).await.ok();
         Ok(json!({
             "engine": info,
             "scene": list,
             "environment": environment,
+            "weather": weather,
             "camera": camera,
         }))
     }

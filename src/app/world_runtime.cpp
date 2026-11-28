@@ -16,7 +16,9 @@
 
 #include "app/frame_renderer.hpp" // k_frames_in_flight
 #include "app/nav_bake.hpp"
+#include "engine/core/profile.hpp"
 #include "app/remote_bridge.hpp"
+#include "engine/core/event_ring.hpp"
 #include "engine/core/sim_clock.hpp"
 #include "engine/rhi/device.hpp"
 #include "engine/rhi/pipeline_cache.hpp"
@@ -134,8 +136,11 @@ WorldRuntime::~WorldRuntime() {
 bool WorldRuntime::build_scene(engine::scene::Scene& scene, engine::asset::AssetManager& assets,
                                engine::rhi::GpuAllocator& allocator,
                                const engine::rhi::TransferContext& setup_transfer,
-                               const std::filesystem::path& project_root) {
-    auto demo_result = build_demo_scene(scene, assets, allocator, setup_transfer, project_root);
+                               const std::filesystem::path& project_root,
+                               engine::renderer::RenderSettings& render_settings,
+                               const std::optional<std::filesystem::path>& start_scene) {
+    auto demo_result = build_demo_scene(scene, assets, allocator, setup_transfer, project_root,
+                                        render_settings, start_scene);
     if (!demo_result) return false;
     demo_ = std::move(*demo_result);
     return true;
@@ -202,7 +207,6 @@ void WorldRuntime::init_scripts(const std::filesystem::path& project_root,
 
 void WorldRuntime::fill_remote_targets(RemoteBridgeTargets& targets) {
     targets.terrain_height = [this](float lx, float lz) { return local_ground_height(lx, lz); };
-    targets.terrain_status = [this] { return terrain_status(); };
     targets.terrain_streamer = &terrain_streamer_;
     targets.terrain_heightmap = &terrain_heightmap_;
     targets.terrain_anchor = &terrain_anchor_;
@@ -262,10 +266,16 @@ void WorldRuntime::simulate(engine::scene::Scene& scene, std::uint64_t frame_num
     // Networking before the simulation: the host steps the remote player's
     // inputs, a joined client reconciles and applies replicated poses (so
     // this frame's physics and draw list see them).
-    net_.update(scene.registry(), demo_.physics_world ? &*demo_.physics_world : nullptr,
-                demo_.character_entity, dt);
+    {
+        QUAT_ZONE_C("net_update", engine::core::ProfileCategory::system);
+        net_.update(scene.registry(), demo_.physics_world ? &*demo_.physics_world : nullptr,
+                    demo_.character_entity, dt);
+    }
 
-    if (scripts_) scripts_->poll_changes(); // hot reload (G7), once per frame
+    if (scripts_) {
+        QUAT_ZONE_N("script_hot_reload");
+        scripts_->poll_changes(); // hot reload (G7), once per frame
+    }
 
     // Audit D2: every simulation system advances by the same sim_dt. A scaled
     // dt above the physics budget runs in equal slices (systems in the same
@@ -289,22 +299,31 @@ void WorldRuntime::simulate(engine::scene::Scene& scene, std::uint64_t frame_num
         engine::core::slice_sim_dt(sim_dt, engine::physics::PhysicsWorld::max_update_dt);
     if (slices.count == 0) slices = {.count = 1, .dt = 0.0F};
     for (std::uint32_t i = 0; simulates && i < slices.count; ++i) {
-        engine::scene::transform_system(scene.registry());
+        {
+            QUAT_ZONE_C("transform_system", engine::core::ProfileCategory::system);
+            engine::scene::transform_system(scene.registry());
+        }
         simulate_slice(scene, slices.dt, play);
     }
     scene.tick(sim_dt, foot_probe_); // advances any Animators by simulated time
 
     // Replication: the host broadcasts moved entities (fresh world poses).
+    QUAT_ZONE_C("net_publish", engine::core::ProfileCategory::system);
     net_.publish(scene.registry(), dt);
 }
 
 void WorldRuntime::simulate_slice(engine::scene::Scene& scene, float sim_dt,
                                   const PlayStep* play) {
+    using engine::core::ProfileCategory;
     if (demo_.physics_world) {
         if (demo_.character_mode) {
+            QUAT_ZONE_C("character_system", ProfileCategory::system);
             engine::scene::character_system(scene.registry(), *demo_.physics_world, sim_dt);
         } else {
+            QUAT_ZONE_C("physics_system", ProfileCategory::system);
             engine::scene::physics_system(scene.registry(), *demo_.physics_world, sim_dt);
+            engine::scene::publish_physics_events(*demo_.physics_world,
+                                                  engine::core::event_ring());
         }
     } else if (play != nullptr && play_physics_) {
         // Perception: the trees see the user's view — the fly camera,
@@ -313,23 +332,38 @@ void WorldRuntime::simulate_slice(engine::scene::Scene& scene, float sim_dt,
         const bool viewing_scene_camera =
             play->use_scene_camera &&
             engine::scene::find_active_camera(scene.registry()) != entt::null;
-        engine::scene::bt_system(
-            scene.registry(), sim_dt,
-            {.navmesh = &nav_.mesh,
-             .ground_height = ground_height_at_,
-             .viewer = viewing_scene_camera ? std::nullopt
-                                            : std::optional(play->fly_camera_pos)});
+        {
+            QUAT_ZONE_C("bt_system", ProfileCategory::system);
+            engine::scene::bt_system(
+                scene.registry(), sim_dt,
+                {.navmesh = &nav_.mesh,
+                 .ground_height = ground_height_at_,
+                 .viewer = viewing_scene_camera ? std::nullopt
+                                                : std::optional(play->fly_camera_pos)});
+        }
         if (std::exchange(nav_.auto_bake, false) && !nav_.mesh.valid() &&
             !scene.registry().view<engine::scene::NavAgent>().empty()) {
             nav_.request = true; // baked below, this frame
             std::fprintf(stderr, "[nav] no navmesh for the agents: baking one\n");
         }
-        engine::scene::nav_agent_system(scene.registry(), nav_.mesh, sim_dt, ground_height_at_);
-        engine::scene::character_system(scene.registry(), *play_physics_, sim_dt);
-        engine::scene::physics_system(scene.registry(), *play_physics_, sim_dt);
+        {
+            QUAT_ZONE_C("nav_agent_system", ProfileCategory::system);
+            engine::scene::nav_agent_system(scene.registry(), nav_.mesh, sim_dt,
+                                            ground_height_at_);
+        }
+        {
+            QUAT_ZONE_C("character_system", ProfileCategory::system);
+            engine::scene::character_system(scene.registry(), *play_physics_, sim_dt);
+        }
+        {
+            QUAT_ZONE_C("physics_system", ProfileCategory::system);
+            engine::scene::physics_system(scene.registry(), *play_physics_, sim_dt);
+        }
+        engine::scene::publish_physics_events(*play_physics_, engine::core::event_ring());
         // Scripts see this step's trigger events, then update (G7); their
         // moves and impulses apply on the next physics step.
         if (scripts_ && scripts_->running()) {
+            QUAT_ZONE_C("script_system", ProfileCategory::system);
             scripts_->dispatch_triggers(*play_physics_);
             scripts_->update(sim_dt);
         }
@@ -338,10 +372,13 @@ void WorldRuntime::simulate_slice(engine::scene::Scene& scene, float sim_dt,
 
 void WorldRuntime::update_audio(engine::scene::Scene& scene, const glm::mat4& view, bool live,
                                 float dt) {
-    if (audio_) audio_->update(scene.registry(), view, live, dt);
+    if (!audio_) return;
+    QUAT_ZONE_C("audio_system", engine::core::ProfileCategory::system);
+    audio_->update(scene.registry(), view, live, dt);
 }
 
 void WorldRuntime::update_terrain(engine::scene::Scene& scene, const glm::vec3& camera_pos) {
+    QUAT_ZONE_N("terrain_update");
     // Terrain upkeep: single-tile mode generates async on demand; streaming
     // mode keeps a seamless tile window centred on the camera (12.4). Both
     // upload before this frame's graph builds, without pipeline stalls.
@@ -554,6 +591,7 @@ void WorldRuntime::service_navmesh_request(engine::scene::Scene& scene) {
     // Blocking, but explicit and logged (editor tooling).
     if (!nav_.request) return;
     nav_.request = false;
+    QUAT_ZONE_N("navmesh_bake");
     if (auto built = bake_navmesh(scene.registry(),
                                   terrain_streamer_ ? &*terrain_streamer_ : nullptr,
                                   &terrain_heightmap_, terrain_anchor_);

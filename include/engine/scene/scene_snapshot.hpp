@@ -18,6 +18,8 @@
 
 #include "engine/core/error.hpp"
 #include "engine/scene/components.hpp"
+#include "engine/scene/physics_settings.hpp"
+#include "engine/scene/world_clock.hpp"
 
 namespace engine::scene {
 
@@ -35,8 +37,8 @@ using SnapshotComponents =
                   scene::MeshRenderer, scene::MaterialOverride, scene::MeshSource,
                   scene::SkinnedMesh, scene::Animator, scene::FootIK, scene::Camera,
                   scene::DirectionalLight, scene::PointLight, scene::Collider,
-                  scene::RigidBody, scene::CharacterController, scene::Terrain,
-                  scene::Grass, scene::ParticleEmitter,
+                  scene::RigidBody, scene::Joint, scene::CharacterController, scene::Terrain,
+                  scene::Grass, scene::ParticleEmitter, scene::WorldClock,
                   scene::NavAgent, scene::BehaviorTree, scene::PatrolRoute, scene::Primitive,
                   scene::InstancedMesh, scene::InstancedMeshParts, scene::Scatter,
                   scene::NetReplicated, scene::AudioSource, scene::AudioListener,
@@ -53,6 +55,8 @@ struct StoredTuple<ComponentList<Ts...>> {
 
 struct SceneSnapshot {
     std::vector<entt::entity> entities;
+    // Scene-level settings kept in the registry context (A10.1 gravity).
+    scene::PhysicsSettings    physics_settings{};
 
     template <typename T>
     using Stored = std::vector<std::pair<entt::entity, T>>;

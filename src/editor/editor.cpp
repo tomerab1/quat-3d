@@ -9,6 +9,7 @@
 #include <ImGuizmo.h> // must follow imgui.h
 
 #include "behavior_panel.hpp"
+#include "engine/core/utf8_path.hpp"
 #include "shell/editor_shell.hpp"
 #include "vendor/imgui_impl_sdl3.h"
 
@@ -23,7 +24,8 @@ namespace {
 } // namespace
 
 std::expected<EditorLayer, core::Error> EditorLayer::create(SDL_Window* window,
-                                                            const std::string& project_root) {
+                                                            const std::string& project_root,
+                                                            const std::string& data_root) {
     if (window == nullptr) {
         return fail("editor: null window");
     }
@@ -47,7 +49,8 @@ std::expected<EditorLayer, core::Error> EditorLayer::create(SDL_Window* window,
     EditorLayer out;
     out.initialized_ = true;
     // Fonts, theme, commands, layout persistence (ROADMAP E8).
-    out.shell_ = std::make_unique<shell::EditorShell>(window, std::filesystem::path(project_root));
+    out.shell_ = std::make_unique<shell::EditorShell>(window, core::path_from_utf8(project_root),
+                                                      core::path_from_utf8(data_root));
     return out;
 }
 

@@ -19,6 +19,12 @@ drive directly to build and debug worlds from a prompt.
 Real engine output, rendered headless on a software Vulkan driver (lavapipe) by
 the CI screenshot pipeline.
 
+![mountain forest](docs/screenshots/mountain-forest.png)
+
+*Mountain forest (`QUAT_DEMO=mountain`): GPU-synthesised, eroded terrain,
+~10k GPU-instanced trees, rocks and bushes scattered by slope and height
+(procedurally generated models), GPU grass, golden-hour sun.*
+
 | Showcase (PBR materials, glass) | Terrain (GPU synthesis + GPU grass) | Physics |
 |---|---|---|
 | ![showcase](docs/screenshots/showcase.png) | ![terrain](docs/screenshots/terrain.png) | ![physics](docs/screenshots/physics.png) |
@@ -44,12 +50,39 @@ The editor (dark theme; a light theme is one click away in View > Theme):
   the surface and in its shadow, and keep their shape at a distance
   (coverage-preserving mipmaps); double-sided leaves are lit on both sides
 - Physically based sky with volumetric clouds and a moving sun
+- Weather: wind, cloud cover, rain or snow, wet ground and snow cover, set
+  in the editor's Renderer panel, saved with the scene, and scriptable over
+  MCP. Wet surfaces darken and turn glossy, with puddles on flat ground; snow
+  settles on upward-facing surfaces and lowers the terrain's snowline; the
+  clouds cast moving shadows (a cloud shadow map computed on the GPU). With
+  accumulation on, rain soaks the ground, snow settles in the cold and melts
+  in the warm, and the ground slowly dries.
+- Time of day from real astronomy: a world clock (date, time, latitude /
+  longitude, speed) puts the Sun where it really is — sunrise in the
+  north-east at midsummer, polar day, the equation of time — and tracks the
+  Moon's position and phase (Meeus' algorithms, tested against the USNO
+  almanac to within half a minute). Edit it in the editor's Time of Day section or
+  over MCP (`time_set`) or from Lua (`time.set_clock`); the night sky itself (stars, Moon disc) is next
+  (ROADMAP R22.2)
 - Image-based lighting that keeps up with the sky in real time
+- HDRI environments: light and backdrop a scene with a Radiance `.hdr`
+  panorama (rotation, intensity). Its sun becomes a shadow-casting sun light.
+- Energy-conserving specular: rough metals keep their brightness
+  (multiple-scattering GGX), and normal-mapped surfaces stop reflecting the
+  sky below their horizon
+- Screen-space reflections traced through the depth pyramid, accumulated over
+  frames, falling back to the environment where they miss
 - Temporal anti-aliasing and upscaling (TAAU) with per-object motion vectors for
   moving, skinned, instanced and wind-animated geometry; render scale modes
   (native, quality, balanced, performance), set like every other render
   setting from the Renderer panel, `render.settings.*` / MCP or a scene file
-- Bloom, auto-exposure, filmic tonemapping
+- Cinematic camera and post: a physical lens on every camera (aperture,
+  shutter, ISO, focal length, focus distance) driving exposure (EV100),
+  bokeh depth of field and motion blur (both off by default); AgX, ACES and
+  Khronos PBR Neutral tonemapping; colour grading (white balance, contrast,
+  lift / gamma / gain) with `.cube` look LUTs; lens vignetting, film grain
+  and chromatic aberration
+- Bloom and auto-exposure
 - Automatic instancing: objects sharing a mesh and material (trees, rocks,
   crates) are drawn together in one instanced draw
 - GPU particles for sparks, fire, smoke and dust: simulated in compute
@@ -79,8 +112,10 @@ The editor (dark theme; a light theme is one click away in View > Theme):
   solver) are synthesised on the GPU in milliseconds, with the deterministic
   CPU generator as fallback and reference; one memory budget bounds the
   resolution x streaming radius of a world
-- Dense, wind-animated grass generated on the GPU every frame around the
-  camera (slope / height limits, distance level of detail, no popping)
+- Dense grass generated on the GPU every frame around the camera (slope /
+  height limits, distance level of detail, no popping); with weather it bends
+  in a global wind field computed on the GPU: gust fronts sweep across the
+  field and eddies swirl through it
 - Jolt physics: rigid bodies, character controller, triggers, terrain collision
 
 **Audio**
@@ -104,10 +139,18 @@ The editor (dark theme; a light theme is one click away in View > Theme):
 - Multiplayer foundations: client/server transport, state replication,
   client-side prediction
 
+**Profiling**
+- Built-in frame profiler: CPU and GPU time of every render pass and scene
+  system (GPU timestamps per pass), with average / p95 / max over the last
+  240 frames, shown in the editor's Profiler panel and queryable by AI tools
+- [Tracy](https://github.com/wolfpld/tracy) integration in profiling builds:
+  CPU zones on every thread, GPU zones, plots for draws, triangles and VRAM —
+  see [`docs/profiling.md`](docs/profiling.md)
+
 **Editor**
 - Docked editor: viewport, hierarchy, inspector, asset browser, console,
-  animation preview, behaviour-tree graph editor, physics and stats panels;
-  the layout and preferences persist per project
+  animation preview, behaviour-tree graph editor, physics, stats and profiler
+  panels; the layout and preferences persist per project
 - Dark and light themes (WCAG AA contrast), Inter + JetBrains Mono with Lucide
   icons, scaling with the display's DPI
 - A command palette (Ctrl+P) over every action, one shortcut table (F1), a
@@ -169,6 +212,14 @@ git clone https://github.com/microsoft/vcpkg.git ~/vcpkg
 Every preset builds the engine, the `game` executable and the `engine_tests`
 suite; run the tests with `ctest --test-dir build/<preset> --output-on-failure`
 (see [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md#testing)).
+
+CMake options:
+
+| Option | Default | Effect |
+|---|---|---|
+| `ENGINE_EDITOR` | `ON` | Build the editor layer |
+| `ENGINE_PROFILE` | `ON` for Debug / RelWithDebInfo and the `release` preset, else `OFF` | Compile in the [Tracy](https://github.com/wolfpld/tracy) profiler client (on demand: no cost until a viewer connects) — see [Profiling](#profiling) |
+| `ENGINE_PACKAGE_BUILD` | `OFF` | Release archives: no source-tree paths compiled in |
 
 ### Linux
 
@@ -252,12 +303,16 @@ Environment variables switch on extra modes:
 
 | Variable | Effect |
 |---|---|
+| `QUAT_DEMO=mountain` | Open the mountain-forest showcase (`assets/scenes/mountain_forest.json`) instead of the material showcase |
 | `QUAT_SCENE=<file>` | Load a scene file (project-relative) instead of the showcase scene |
 | `QUAT_INPUT_USER_FILE=<path>` | The player's input rebinding file (default `input.json` in the per-user preferences directory; empty = none) — see [`docs/input.md`](docs/input.md) |
+| `QUAT_HDRI=<file>` | Light the scene with a Radiance `.hdr` panorama (project-relative). `scripts/fetch-hdri.sh <id>` downloads a CC0 one from Poly Haven into `hdri-cache/` |
 | `QUAT_PLAY=1` | Enter Play mode on the first frame (a non-editor build also plays a `QUAT_SCENE` game) |
+| `QUAT_GAME_CAMERA=1` | Editor builds: Play looks through the scene's active camera from the start ("Game camera"), e.g. for a scene's hero shot |
 | `QUAT_SCRIPT_HOT_RELOAD=0` / `=1` | Turn script hot reload off (editor) / on (non-editor builds) |
 | `QUAT_GLTF=<file>` | Load a glTF/GLB model instead of the showcase scene |
 | `QUAT_TERRAIN=1` | Add a procedural terrain tile (with a grass field) |
+| `QUAT_TIME=<ISO-8601>` | Start with a world clock at this date and time (e.g. `2026-06-21T21:30+02:00`) driving the sun; `QUAT_LATLON=<lat>,<lon>` sets the place (default Paris), `QUAT_TIME_SCALE=<n>` the clock speed (default 1, 0 = frozen) |
 | `QUAT_PHYSICS=1` / `QUAT_CHARACTER=1` | Physics (with sparks and smoke) / character-controller demo scenes |
 | `QUAT_HOST=<port>` / `QUAT_JOIN=<ip:port>` | Host or join a networked session (host listens on 127.0.0.1 only unless `QUAT_NET_BIND` says otherwise) — see [Networking](#networking) |
 | `QUAT_NET_BIND=<ipv4>` | Host: interface to listen on (default `127.0.0.1`; `0.0.0.0` = every interface, for LAN/internet play) |
@@ -275,10 +330,13 @@ Environment variables switch on extra modes:
 | `QUAT_EDITOR_SELECT=<name>` / `QUAT_EDITOR_FOCUS=<panel>` | Select an entity / bring a panel forward at startup (`scripts/editor-screenshots.sh`) |
 | `QUAT_WINDOW_SIZE=<w>x<h>` | Initial window size (default 1280x720) |
 | `QUAT_NO_VSYNC=1` | Disable vsync |
+| `QUAT_NO_MUTABLE_SWAPCHAIN=1` | Act as a driver without `VK_KHR_swapchain_mutable_format`: the editor UI composites through a scratch image and a copy instead of a UNORM view of the swapchain (same pixels; for checking that fallback) |
 | `QUAT_NO_AUDIO=1` | Mute: run audio without opening a playback device |
 | `QUAT_NON_FINITE_CHECK=1` | Count NaN/Inf values the bloom / TAA guards replace and log them per frame (always on in debug builds) |
 | `QUAT_MAX_FRAMES=<n>` + `QUAT_SCREENSHOT=<file.ppm>` | Render n frames, save the last one, exit (headless checks) |
 | `QUAT_ASSET_ROOT=<dir>` | Data directory holding `assets/` and `cooked/shaders/` (default: next to the executable — inside a macOS app, `Contents/Resources` — then, in development builds, the source tree) |
+| `TRACY_PORT=<port>` | `ENGINE_PROFILE` builds: the port the Tracy client listens on (default 8086, loopback only) |
+| `TRACY_NO_SYS_TRACE=1` | `ENGINE_PROFILE` builds run as root / administrator: do not start Tracy's kernel sampling and context-switch tracing |
 
 ### Networking
 
@@ -349,6 +407,24 @@ The language reference, callbacks and the whole engine API are in
 [`docs/scripting.md`](docs/scripting.md). AI assistants can write and debug
 scripts through MCP (`script_*` tools and the `write-gameplay-script` skill).
 
+### Cinematic showcase (CC0 Poly Haven assets)
+
+`assets/scenes/cinematic_forest.json` is a pine-forest clearing at golden
+hour built from real downloaded CC0 models, textures and an HDRI from
+[Poly Haven](https://polyhaven.com). The assets are not committed; fetch
+and cook them first (about 560 MB, checksums verified), then run it:
+
+```sh
+python3 scripts/fetch-polyhaven.py assets/showcase/cinematic/assets.json \
+  --cook-with build/release/quat-cook
+QUAT_SCENE=assets/scenes/cinematic_forest.json QUAT_PLAY=1 QUAT_GAME_CAMERA=1 ./build/release/game
+```
+
+![cinematic forest clearing](docs/screenshots/cinematic-hero.jpg)
+
+The assets, credits, stills and the MCP recipe for building scenes like it
+are in [`docs/cinematic-showcase.md`](docs/cinematic-showcase.md).
+
 ### Sample models
 
 Put glTF models under `sample-assets/` (not committed) and they show up in the
@@ -379,6 +455,20 @@ layout other glTF viewers do not expect (`--normal-layout rgb` avoids that).
 Options (codecs, quality) are listed in
 [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md#cooking-assets).
 
+### Profiling
+
+The editor's **View → Profiler** panel shows where each frame's time goes:
+frame, CPU, GPU and wait times, a frame-time graph, and a sortable table of
+render passes and scene systems with CPU and GPU average / p95 / max.
+
+For a full timeline, build with `ENGINE_PROFILE=ON` (the default for Debug /
+RelWithDebInfo and the `release` preset), start the game, and connect the
+[Tracy 0.13.1 viewer](https://github.com/wolfpld/tracy/releases/tag/v0.13.1)
+to `127.0.0.1` (the game listens on the loopback interface only; forward
+port 8086 over SSH to profile another machine). Details, including what is
+instrumented and how GPU timing works, are in
+[`docs/profiling.md`](docs/profiling.md).
+
 ## AI tools (MCP)
 
 [`tools/quat-mcp`](tools/quat-mcp/README.md) is an MCP server that lets AI
@@ -389,15 +479,23 @@ validation messages, frame statistics, pause / single-step / slow down the
 simulation, watch entities, cast physics rays and query navmesh paths — and
 tune the look: exposure, bloom, anti-aliasing, shadows, sky light, clouds and
 per-entity materials, with the same values the editor's Renderer panel and
-Material inspector show — author NPC behaviour trees: build, inspect and
+Material inspector show — set the weather (wind, clouds, rain or snow,
+wetness, snow cover) — author NPC behaviour trees: build, inspect and
 edit the same graph the editor's Behaviour panel shows, with per-node
-validation errors, and see what each node did on the last tick — and write
+validation errors, and see what each node did on the last tick — write
 material shaders: Slang modules the engine compiles (returning the compiler
-errors with line numbers), assigns to entities and hot-swaps while it runs.
+errors with line numbers), assigns to entities and hot-swaps while it runs —
+and profile it: the costliest passes and systems on the CPU and GPU, frame
+captures with spikes and their causes, draw / triangle / memory counters.
 For world building it reports entity bounds, sets models down on terrain or
 colliders (`world_place_on_ground`), takes screenshots from any camera without
 moving yours, and searches and downloads CC0 models from Poly Haven
 (`asset_search` / `asset_fetch`, into the gitignored `assets/meshes/polyhaven/`).
+Physics in a running game: read and set body velocities, push
+bodies with impulses and forces, change the scene's gravity, query every hit
+along a ray, overlaps and shape casts, follow a feed of contact and trigger
+events, author joints (hinges, sliders, distance ropes …) and walk character
+controllers.
 
 It also ships **workflow skills** — step-by-step guides with verification
 steps and pitfalls for building a level, tuning the look, authoring
@@ -441,6 +539,50 @@ token, so other users on the machine and web pages in your browser cannot
 drive the engine. See [`tools/quat-mcp/README.md`](tools/quat-mcp/README.md)
 for Claude Desktop setup, explicit tokens, the full tool list and the workflows.
 
+## Make a game and ship it
+
+A game is a folder with a `game.json` next to its scenes, Lua scripts and
+assets — [`games/coin-collector`](games/coin-collector) is a complete
+example:
+
+```json
+{
+  "format": 1,
+  "name": "Coin Collector",
+  "id": "dev.quat3d.coin-collector",
+  "version": "0.1.0",
+  "start_scene": "assets/scenes/coin_collector.json",
+  "window": { "title": "Coin Collector", "width": 1280, "height": 720 },
+  "icon": "assets/icons/coin-collector.png"
+}
+```
+
+1. **Build it in the editor (or over MCP).** `QUAT_GAME=games/coin-collector
+   ./build/release/game` opens the project: scenes save and load inside it,
+   and an assistant connected through quat-mcp can build the world and write
+   the scripts.
+2. **Play it as players will.** `QUAT_GAME=games/coin-collector
+   ./build/release/quat-player` runs the game without the editor: its start
+   scene, its window and icon, no developer tools.
+3. **Package it.** *File → Build & Export…* in the editor, the
+   `project_build` MCP tool, or the command line:
+
+   ```sh
+   ./build/release/quat-pack games/coin-collector \
+       --player ./build/release/quat-player --out dist --smoke-test
+   ```
+
+   This writes `dist/coin-collector-0.1.0-linux-x64.tar.gz` (a `.zip` with
+   `Coin Collector.app` on macOS, with `coin-collector.exe` on Windows):
+   only the files the game uses, cooked, with a manifest, the C++ runtime
+   or Vulkan-on-Metal inside, and a `README-RUN.txt` — unzip and
+   double-click. Packages are built on the OS they are for; the
+   [Release workflow](.github/workflows/release.yml) packages the sample game
+   for all three and offers them as downloads.
+
+The details — project format, what ships, versioning, signing — are in
+[`docs/game-packaging.md`](docs/game-packaging.md).
+
 ## Testing
 
 Tests use [GoogleTest](https://github.com/google/googletest) and run without
@@ -483,8 +625,11 @@ The plan lives in [`ROADMAP.md`](ROADMAP.md), grouped into tracks:
 | [`docs/scripting.md`](docs/scripting.md) | Lua gameplay scripting: callbacks, the engine API, limits, hot reload |
 | [`docs/input.md`](docs/input.md) | Input actions: action-map format, triggers, modifiers, contexts, rebinding |
 | [`docs/camera-rig.md`](docs/camera-rig.md) | The orbit / strategy camera rig and its input |
+| [`docs/cinematic-showcase.md`](docs/cinematic-showcase.md) | The CC0 cinematic forest scene: assets and credits, fetching, renders, the MCP recipe |
 | [`docs/reading/README.md`](docs/reading/README.md) | Reading list: the papers and talks behind the engine's techniques, with where each lives in the code |
 | [`docs/remote-control.md`](docs/remote-control.md) | The remote-control protocol AI tools use to drive the engine |
+| [`docs/game-packaging.md`](docs/game-packaging.md) | Game projects, the runtime player and `quat-pack` packaging |
+| [`docs/profiling.md`](docs/profiling.md) | Profiling with Tracy, the editor's Profiler panel and the MCP profiling tools |
 | [`docs/editor-ux.md`](docs/editor-ux.md) | The editor's design system: principles, tokens, widget kit, layout, shortcuts |
 | [`docs/CYCLE.md`](docs/CYCLE.md) | How development runs: the repeating plan → parallel agents → merge → CI → audit → learn cycle |
 | [`docs/LEARNINGS.md`](docs/LEARNINGS.md) | Lessons recorded by past cycles |
@@ -501,9 +646,16 @@ include/engine/     Public headers, one folder per module
 src/                Implementation, mirroring include/ (rhi, renderer, scene, physics, ...)
 src/editor/         The editor (only in builds with ENGINE_EDITOR=ON, the default)
 src/remote/         Remote-control endpoint used by AI tooling
+src/app/            Application layer shared by `game` (editor build) and `quat-player`
+src/project/, src/pack/  Game projects (game.json) and packaging (quat-pack)
+games/              Games made with the engine (game.json + their assets)
+packaging/          Per-OS packaging templates (README-RUN, Info.plist)
 tools/quat-mcp/     MCP server for AI assistants (Rust, standalone Cargo crate),
                     its workflow skills and the Claude Code plugin
+tools/quat-pack/    Game packager entry point
 tools/quat-cook/    Offline asset cooker CLI (src/cook/ holds the cooking library)
+tools/asset-gen/    quat-asset-gen: procedural nature models -> assets/meshes/nature/
+assets/scenes/      Showcase scene files (scene JSON v2)
 tests/              GoogleTest suite (engine_tests): tests/<module>/, shared helpers in tests/support/
 docs/               Project documentation
 ports/, triplets/   vcpkg customisations

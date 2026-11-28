@@ -145,6 +145,37 @@ TEST(GrassLayout, SanitizeClampsAndNormalises) {
     EXPECT_EQ(r::sanitize(s).wind_direction, glm::vec2(1.0F, 0.0F));
 }
 
+// The slope fade: full density up to grass_slope_fade_deg below the
+// steepest allowed slope, then thinning smoothly to 0 at it.
+TEST(GrassLayout, SlopeFadeThinsBelowTheSteepestSlope) {
+    const auto ny = [](float deg) { return std::cos(glm::radians(deg)); };
+    r::GrassSettings s;
+    s.slope_deg = glm::vec2(0.0F, 40.0F);
+    EXPECT_NEAR(r::grass_slope_fade_start(s), ny(40.0F - r::grass_slope_fade_deg), 1e-6F);
+    EXPECT_EQ(r::grass_slope_keep(s, 1.0F), 1.0F);
+    EXPECT_EQ(r::grass_slope_keep(s, ny(30.0F)), 1.0F);
+    EXPECT_EQ(r::grass_slope_keep(s, ny(32.0F) + 1e-6F), 1.0F);
+    EXPECT_NEAR(r::grass_slope_keep(s, ny(40.0F)), 0.0F, 1e-6F);
+    float previous = 1.0F;
+    for (float deg = 32.5F; deg < 40.0F; deg += 0.5F) {
+        const float keep = r::grass_slope_keep(s, ny(deg));
+        EXPECT_GT(keep, 0.0F) << deg;
+        EXPECT_LT(keep, previous) << deg; // strictly thinning toward the limit
+        previous = keep;
+    }
+    // The band never reaches below the shallowest allowed slope.
+    s.slope_deg = glm::vec2(36.0F, 40.0F);
+    EXPECT_NEAR(r::grass_slope_fade_start(s), ny(36.0F), 1e-6F);
+    // No upper limit: no fade.
+    s.slope_deg = glm::vec2(0.0F, 90.0F);
+    EXPECT_EQ(r::grass_slope_fade_start(s), -2.0F);
+    EXPECT_EQ(r::grass_slope_keep(s, ny(80.0F)), 1.0F);
+    // A zero-width range keeps the hard edge.
+    s.slope_deg = glm::vec2(30.0F, 30.0F);
+    EXPECT_EQ(r::grass_slope_keep(s, ny(29.0F)), 1.0F);
+    EXPECT_EQ(r::grass_slope_keep(s, ny(31.0F)), 0.0F);
+}
+
 TEST(GrassLayout, StripIndexCounts) {
     EXPECT_EQ(r::grass_index_count(r::grass_near_segments), 39U);
     EXPECT_EQ(r::grass_index_count(r::grass_far_segments), 15U);

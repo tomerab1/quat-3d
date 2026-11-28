@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "engine/rhi/device.hpp"
+#include "engine/rhi/formats.hpp"
 
 namespace engine::rhi {
 
@@ -41,6 +42,42 @@ namespace {
     return VkExtent2D{
         std::clamp(wanted.width, caps.minImageExtent.width, caps.maxImageExtent.width),
         std::clamp(wanted.height, caps.minImageExtent.height, caps.maxImageExtent.height)};
+}
+
+// Whether swapchain images of `format` + `usage` can be created mutable-format
+// with the view formats in `list` (the implied image parameters of
+// VK_SWAPCHAIN_CREATE_MUTABLE_FORMAT_BIT_KHR, VUID-VkSwapchainCreateInfoKHR-
+// imageFormat-01778).
+[[nodiscard]] bool supports_mutable_format(VkPhysicalDevice gpu, VkFormat format,
+                                           VkImageUsageFlags usage,
+                                           const VkImageFormatListCreateInfo& list) {
+    VkPhysicalDeviceImageFormatInfo2 query{};
+    query.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_FORMAT_INFO_2;
+    query.pNext = &list;
+    query.format = format;
+    query.type = VK_IMAGE_TYPE_2D;
+    query.tiling = VK_IMAGE_TILING_OPTIMAL;
+    query.usage = usage;
+    query.flags = VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT | VK_IMAGE_CREATE_EXTENDED_USAGE_BIT;
+    VkImageFormatProperties2 props{};
+    props.sType = VK_STRUCTURE_TYPE_IMAGE_FORMAT_PROPERTIES_2;
+    return vkGetPhysicalDeviceImageFormatProperties2(gpu, &query, &props) == VK_SUCCESS;
+}
+
+[[nodiscard]] VkImageView make_view(VkDevice device, VkImage image, VkFormat format) {
+    VkImageViewCreateInfo view_info{};
+    view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    view_info.image = image;
+    view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    view_info.format = format;
+    view_info.components = {VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY,
+                            VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY};
+    view_info.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    VkImageView view = VK_NULL_HANDLE;
+    if (vkCreateImageView(device, &view_info, nullptr, &view) != VK_SUCCESS) {
+        return VK_NULL_HANDLE;
+    }
+    return view;
 }
 
 } // namespace
@@ -103,6 +140,22 @@ std::expected<void, core::Error> Swapchain::build(VkExtent2D window_extent) {
     // TRANSFER_SRC for headless screenshot capture (QUAT_SCREENSHOT).
     info.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
                       VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    // An sRGB swapchain is also viewable as its UNORM twin when the device
+    // has VK_KHR_swapchain_mutable_format: the editor UI blends in gamma
+    // space through that view (ImGuiPass), everything else is unchanged.
+    const VkFormat unorm = unorm_of_srgb(surface_format.format);
+    const std::array<VkFormat, 2> view_formats{surface_format.format, unorm};
+    VkImageFormatListCreateInfo format_list{};
+    format_list.sType = VK_STRUCTURE_TYPE_IMAGE_FORMAT_LIST_CREATE_INFO;
+    format_list.viewFormatCount = static_cast<std::uint32_t>(view_formats.size());
+    format_list.pViewFormats = view_formats.data();
+    const bool mutable_format =
+        unorm != VK_FORMAT_UNDEFINED && device_->swapchain_mutable_format() &&
+        supports_mutable_format(gpu, surface_format.format, info.imageUsage, format_list);
+    if (mutable_format) {
+        info.flags |= VK_SWAPCHAIN_CREATE_MUTABLE_FORMAT_BIT_KHR;
+        info.pNext = &format_list;
+    }
     // Rendered on the graphics queue, presented from the present queue. When
     // those are different families (rare: no family both draws and presents)
     // the images are shared concurrently, so no ownership transfer is needed.
@@ -150,17 +203,18 @@ std::expected<void, core::Error> Swapchain::build(VkExtent2D window_extent) {
 
     image_views_.resize(actual_count, VK_NULL_HANDLE);
     for (std::uint32_t i = 0; i < actual_count; ++i) {
-        VkImageViewCreateInfo view_info{};
-        view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-        view_info.image = images_[i];
-        view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
-        view_info.format = format_;
-        view_info.components = {VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY,
-                                VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY};
-        view_info.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-        if (VkResult r = vkCreateImageView(device_->handle(), &view_info, nullptr, &image_views_[i]);
-            r != VK_SUCCESS) {
+        image_views_[i] = make_view(device_->handle(), images_[i], format_);
+        if (image_views_[i] == VK_NULL_HANDLE) {
             return fail("vkCreateImageView failed for swapchain image");
+        }
+    }
+    if (mutable_format) {
+        unorm_image_views_.resize(actual_count, VK_NULL_HANDLE);
+        for (std::uint32_t i = 0; i < actual_count; ++i) {
+            unorm_image_views_[i] = make_view(device_->handle(), images_[i], unorm);
+            if (unorm_image_views_[i] == VK_NULL_HANDLE) {
+                return fail("vkCreateImageView failed for a swapchain image's UNORM view");
+            }
         }
     }
     return {};
@@ -182,6 +236,12 @@ void Swapchain::destroy_resources() noexcept {
         }
     }
     image_views_.clear();
+    for (VkImageView view : unorm_image_views_) {
+        if (view != VK_NULL_HANDLE) {
+            vkDestroyImageView(device_->handle(), view, nullptr);
+        }
+    }
+    unorm_image_views_.clear();
     images_.clear();
     if (swapchain_ != VK_NULL_HANDLE) {
         vkDestroySwapchainKHR(device_->handle(), swapchain_, nullptr);
@@ -213,6 +273,7 @@ Swapchain& Swapchain::operator=(Swapchain&& other) noexcept {
         extent_      = other.extent_;
         images_      = std::move(other.images_);
         image_views_ = std::move(other.image_views_);
+        unorm_image_views_ = std::move(other.unorm_image_views_);
     }
     return *this;
 }

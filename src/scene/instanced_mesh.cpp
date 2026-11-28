@@ -241,10 +241,10 @@ FrameDrawLists build_frame_draw_lists(const entt::registry& registry,
                                       std::span<const renderer::DrawItem> opaque_items,
                                       std::span<const renderer::DrawItem> shadow_items,
                                       const glm::mat4& camera_view_proj,
-                                      const glm::mat4& light_view_proj,
+                                      const glm::mat4& shadow_cull_view_proj,
                                       renderer::MotionHistory* opaque_motion) {
     FrameDrawLists lists{renderer::batch_draws(opaque_items), renderer::batch_draws(shadow_items)};
-    append_instanced_draws(registry, light_view_proj, InstancedPass::shadow, lists.shadow);
+    append_instanced_draws(registry, shadow_cull_view_proj, InstancedPass::shadow, lists.shadow);
     append_instanced_draws(registry, camera_view_proj, InstancedPass::opaque, lists.opaque,
                            opaque_motion);
     return lists;
@@ -252,6 +252,30 @@ FrameDrawLists build_frame_draw_lists(const entt::registry& registry,
 
 std::size_t frame_draw_count(const FrameDrawLists& lists, std::size_t transparent_items) {
     return lists.opaque.draws.size() + lists.shadow.draws.size() + transparent_items;
+}
+
+FrameDrawStats frame_draw_stats(const FrameDrawLists& lists,
+                                std::span<const renderer::DrawItem> transparent,
+                                bool with_shadows) {
+    FrameDrawStats stats;
+    const auto add = [&stats](const renderer::InstancedDrawList& list) {
+        for (const renderer::InstancedDraw& d : list.draws) {
+            ++stats.draws;
+            stats.instances += d.instance_count;
+            if (d.mesh != nullptr) {
+                stats.triangles += std::uint64_t{d.instance_count} * (d.mesh->index_count / 3);
+            }
+        }
+    };
+    add(lists.opaque);
+    if (with_shadows) add(lists.shadow);
+    for (const renderer::DrawItem& item : transparent) {
+        if (item.mesh == nullptr) continue;
+        ++stats.draws;
+        ++stats.instances;
+        stats.triangles += item.mesh->index_count / 3;
+    }
+    return stats;
 }
 
 } // namespace engine::scene

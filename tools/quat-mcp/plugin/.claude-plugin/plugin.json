@@ -1,7 +1,7 @@
 {
   "name": "quat-3d",
   "version": "0.1.0",
-  "description": "Build, tune, script, debug and playtest worlds in a running quat-3d engine: the quat-mcp MCP server plus workflow skills (build-level, tune-look, debug-physics-glitch, write-gameplay-script, design-npc-behaviour, author-material-shader, playtest, inspect-scene, debug-session).",
+  "description": "Build, tune, script, debug and playtest worlds in a running quat-3d engine: the quat-mcp MCP server plus workflow skills (build-level, tune-look, debug-physics-glitch, write-gameplay-script, design-npc-behaviour, author-material-shader, set-weather, playtest, inspect-scene, debug-session, find-performance-problem).",
   "author": {
     "name": "quat-3d"
   },

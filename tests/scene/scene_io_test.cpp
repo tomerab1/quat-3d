@@ -3,6 +3,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <system_error>
 #include <iterator>
 #include <string>
 
@@ -15,6 +16,7 @@
 #include "engine/scene/component_json.hpp"
 #include "engine/scene/components.hpp"
 #include "engine/scene/material_override.hpp"
+#include "engine/scene/physics_settings.hpp"
 #include "engine/scene/scene.hpp"
 #include "engine/scene/scene_io.hpp"
 #include "support/expect_ok.hpp"
@@ -295,6 +297,142 @@ TEST(GpuSceneIo, RenderSettingsAndMaterialOverridesRoundTrip) {
     EXPECT_NE(find_named(loaded, "keep_me"), k_none);
     EXPECT_EQ(find_named(loaded, "x"), k_none);
     std::filesystem::remove(bad);
+}
+
+// A10.1: the scene's gravity is saved as a versioned physics_settings block
+// (saving needs no GPU).
+TEST(SceneIo, SavesThePhysicsSettingsBlock) {
+    s::Scene scene;
+    s::physics_settings_mut(scene.registry()).gravity = glm::vec3(0.0F, -1.62F, 0.5F);
+    const auto path = std::filesystem::temp_directory_path() / "quat_physics_settings.json";
+    ASSERT_OK(s::save_scene(scene, path));
+    nlohmann::json root;
+    {
+        // Closed before the remove: Windows cannot delete an open file.
+        std::ifstream in(path);
+        root = nlohmann::json::parse(in, nullptr, false);
+    }
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+    EXPECT_FALSE(ec) << ec.message();
+    ASSERT_FALSE(root.is_discarded());
+    ASSERT_TRUE(root.contains("physics_settings"));
+    EXPECT_EQ(root["physics_settings"]["version"], s::k_physics_settings_version);
+    EXPECT_NEAR(root["physics_settings"]["gravity"][1].get<float>(), -1.62F, 1e-6F);
+    EXPECT_NEAR(root["physics_settings"]["gravity"][2].get<float>(), 0.5F, 1e-6F);
+}
+
+// A joint's target is saved as a file index and re-linked on load.
+TEST(GpuSceneIo, JointTargetsRoundTrip) {
+    QUAT_REQUIRE_GPU(g);
+    engine::asset::AssetManager assets;
+    s::Scene scene;
+    const entt::entity frame = scene.create_entity("frame");
+    const entt::entity door = scene.create_entity("door");
+    auto& j = scene.registry().emplace<s::Joint>(door);
+    j.type = s::JointType::hinge;
+    j.target = frame;
+    j.limits_enabled = true;
+    j.limits = glm::vec2(-90.0F, 0.0F);
+    scene.registry().emplace<s::Joint>(frame).type = s::JointType::point; // to the world
+    const auto path = std::filesystem::temp_directory_path() / "quat_joint_rt.json";
+    ASSERT_OK(s::save_scene(scene, path));
+    {
+        std::ifstream in(path);
+        const nlohmann::json root = nlohmann::json::parse(in, nullptr, false);
+        ASSERT_FALSE(root.is_discarded());
+        const nlohmann::json& list = root["entities"];
+        ASSERT_EQ(list.size(), 2U);
+        const std::size_t door_index = list[0]["name"] == "door" ? 0 : 1;
+        const std::size_t frame_index = 1 - door_index;
+        EXPECT_EQ(list[door_index]["joint"]["target"], frame_index) << "stored as an index";
+        EXPECT_TRUE(list[frame_index]["joint"]["target"].is_null());
+        EXPECT_FALSE(list[door_index]["joint"].contains("active")) << "runtime state saved";
+    }
+    s::Scene loaded;
+    ASSERT_OK(s::load_scene(loaded, path, g->allocator, g->transfer, assets));
+    std::filesystem::remove(path);
+    const entt::entity lframe = find_named(loaded, "frame");
+    const entt::entity ldoor = find_named(loaded, "door");
+    ASSERT_TRUE(loaded.registry().all_of<s::Joint>(ldoor));
+    const s::Joint& lj = loaded.registry().get<s::Joint>(ldoor);
+    EXPECT_EQ(lj.target, lframe);
+    EXPECT_EQ(lj.type, s::JointType::hinge);
+    EXPECT_FLOAT_EQ(lj.limits.x, -90.0F);
+    EXPECT_EQ(loaded.registry().get<s::Joint>(lframe).target, k_none);
+
+    // A target index out of range fails the load.
+    const auto bad = write_temp("quat_joint_bad.json", R"({"entities": [
+        {"name": "a", "joint": {"type": "point", "target": 5}}]})");
+    EXPECT_ERR(s::load_scene(loaded, bad, g->allocator, g->transfer, assets));
+    std::filesystem::remove(bad);
+}
+
+TEST(GpuSceneIo, PhysicsSettingsRoundTrip) {
+    QUAT_REQUIRE_GPU(g);
+    engine::asset::AssetManager assets;
+    s::Scene scene;
+    s::physics_settings_mut(scene.registry()).gravity = glm::vec3(1.0F, -3.0F, 0.0F);
+    const auto path = std::filesystem::temp_directory_path() / "quat_physics_rt.json";
+    ASSERT_OK(s::save_scene(scene, path));
+    s::Scene loaded;
+    ASSERT_OK(s::load_scene(loaded, path, g->allocator, g->transfer, assets));
+    std::filesystem::remove(path);
+    EXPECT_EQ(s::physics_settings(loaded.registry()).gravity, glm::vec3(1.0F, -3.0F, 0.0F));
+
+    // Older files have no block: the default gravity.
+    const auto old = write_temp("quat_physics_old.json", R"({"entities": []})");
+    ASSERT_OK(s::load_scene(loaded, old, g->allocator, g->transfer, assets));
+    EXPECT_EQ(s::physics_settings(loaded.registry()).gravity, glm::vec3(0.0F, -9.81F, 0.0F));
+    std::filesystem::remove(old);
+
+    // Newer blocks and bad values fail the load.
+    const auto newer = write_temp("quat_physics_new.json", R"({"entities": [],
+        "physics_settings": {"version": 99, "gravity": [0, -1, 0]}})");
+    EXPECT_ERR(s::load_scene(loaded, newer, g->allocator, g->transfer, assets));
+    std::filesystem::remove(newer);
+    const auto bad = write_temp("quat_physics_bad.json", R"({"entities": [],
+        "physics_settings": {"gravity": [0, -1e6, 0]}})");
+    EXPECT_ERR(s::load_scene(loaded, bad, g->allocator, g->transfer, assets));
+    std::filesystem::remove(bad);
+}
+
+// R21: the HDRI path is scene-level data saved next to the render settings
+// (whose `environment` group selects it); scenes without one load with none.
+TEST(GpuSceneIo, EnvironmentHdriRoundTrips) {
+    QUAT_REQUIRE_GPU(g);
+    engine::asset::AssetManager assets;
+    s::Scene scene;
+    scene.create_entity("anchor");
+    engine::renderer::RenderSettings saved;
+    saved.environment.source = static_cast<int>(engine::renderer::SkySource::hdri);
+    saved.environment.hdri_rotation_deg = 120.0F;
+    saved.ssr.quality = static_cast<int>(engine::renderer::SsrQuality::high);
+    const s::SceneEnvironment env{"hdri-cache/sky_2k.hdr"};
+    const auto path = std::filesystem::temp_directory_path() / "quat_env_scene.json";
+    ASSERT_OK(s::save_scene(scene, path, &saved, &env));
+
+    s::Scene loaded;
+    engine::renderer::RenderSettings settings;
+    s::SceneEnvironment read{"stale.hdr"};
+    ASSERT_OK(s::load_scene(loaded, path, g->allocator, g->transfer, assets, &settings, &read));
+    EXPECT_EQ(read.hdri, "hdri-cache/sky_2k.hdr");
+    EXPECT_EQ(settings.environment.source, static_cast<int>(engine::renderer::SkySource::hdri));
+    EXPECT_FLOAT_EQ(settings.environment.hdri_rotation_deg, 120.0F);
+    EXPECT_EQ(settings.ssr.quality, static_cast<int>(engine::renderer::SsrQuality::high));
+
+    ASSERT_OK(s::save_scene(scene, path, &saved));
+    ASSERT_OK(s::load_scene(loaded, path, g->allocator, g->transfer, assets, &settings, &read));
+    EXPECT_TRUE(read.hdri.empty());
+
+    const auto bad = write_temp("quat_bad_env.json", R"({"entities": [],
+        "environment": {"hdri": 5}})");
+    read.hdri = "keep.hdr";
+    auto result = s::load_scene(loaded, bad, g->allocator, g->transfer, assets, &settings, &read);
+    ASSERT_FALSE(result);
+    EXPECT_EQ(read.hdri, "keep.hdr");
+    std::filesystem::remove(bad);
+    std::filesystem::remove(path);
 }
 
 } // namespace

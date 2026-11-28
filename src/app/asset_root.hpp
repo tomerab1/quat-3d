@@ -16,12 +16,28 @@
 // convert with engine/core/utf8_path.hpp where a UTF-8 string is needed (SDL,
 // ImGui, pipeline-cache keys) — never with .string().
 
+#include <expected>
 #include <filesystem>
+
+#include "engine/core/error.hpp"
 
 namespace quat::app {
 
-// Directory holding assets/.
+// Directory holding assets/: the data root, or the game project opened with
+// open_project_root().
 [[nodiscard]] const std::filesystem::path& project_root();
+
+// Makes `root` (a game project, ROADMAP P4) the project root for the rest of
+// the process and its working directory, so project-relative paths in scene
+// files resolve the same in the editor, a development run and a package.
+// The data root (and with it the cooked shaders) is resolved first. Call
+// once, before anything reads project_root().
+[[nodiscard]] std::expected<void, engine::core::Error>
+open_project_root(const std::filesystem::path& root);
+
+// The engine's data root (assets/ + cooked/shaders/), whatever project is
+// open: engine-owned data such as shader sources and editor fonts.
+[[nodiscard]] const std::filesystem::path& data_root();
 
 // Directory holding the cooked shaders (.spv + reflection .json).
 [[nodiscard]] const std::filesystem::path& cooked_shader_dir();

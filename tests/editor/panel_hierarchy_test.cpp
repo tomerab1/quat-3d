@@ -233,6 +233,45 @@ TEST(EditorHierarchy, ReparentUnderAZeroScaledParentIsRefused) {
     EXPECT_EQ(sh::reparent_keep_world(scene, child, inner), sh::ReparentResult::done);
 }
 
+// Issue #92: the 3x3 determinant ignores the translation column, so a NaN or
+// Inf there (a corrupt file, a diverged simulation) used to pass the check
+// and write a non-finite local transform into the child.
+TEST(EditorHierarchy, ReparentUnderANonFiniteTranslationIsRefused) {
+    s::Scene scene;
+    entt::registry& r = scene.registry();
+    const entt::entity parent = scene.create_entity("parent");
+    const entt::entity child = scene.create_entity("child");
+    const glm::mat4 local = glm::translate(glm::mat4(1.0F), glm::vec3(1.0F, 2.0F, 3.0F));
+    r.get<s::Transform>(child).local = local;
+
+    for (const float bad : {std::numeric_limits<float>::quiet_NaN(),
+                            std::numeric_limits<float>::infinity(),
+                            -std::numeric_limits<float>::infinity()}) {
+        for (int axis = 0; axis < 3; ++axis) {
+            glm::mat4 m(1.0F);
+            m[3][axis] = bad;
+            r.get<s::Transform>(parent).local = m;
+            EXPECT_EQ(sh::reparent_keep_world(scene, child, parent),
+                      sh::ReparentResult::singular_parent)
+                << "translation axis " << axis << " = " << bad;
+            EXPECT_FALSE(r.all_of<s::Parent>(child)) << "nothing changes";
+            EXPECT_EQ(r.get<s::Transform>(child).local, local);
+        }
+    }
+    // Through a grandparent too: the whole chain is what the child inherits.
+    const entt::entity inner = scene.create_entity("inner");
+    ASSERT_TRUE(scene.set_parent(inner, parent));
+    glm::mat4 m(1.0F);
+    m[3][1] = std::numeric_limits<float>::quiet_NaN();
+    r.get<s::Transform>(parent).local = m;
+    EXPECT_EQ(sh::reparent_keep_world(scene, child, inner), sh::ReparentResult::singular_parent);
+
+    r.get<s::Transform>(parent).local = glm::translate(glm::mat4(1.0F), glm::vec3(5.0F));
+    EXPECT_EQ(sh::reparent_keep_world(scene, child, inner), sh::ReparentResult::done);
+    const glm::mat4 kept = sh::current_world(r, child);
+    EXPECT_NEAR(kept[3].z, 3.0F, 1e-4F) << "the world pose stays put";
+}
+
 TEST(EditorAssetBrowser, ListsFoldersFirstAndStaysInsideTheProject) {
     const quat::test::TempDir tmp("assets");
     const std::filesystem::path root = tmp.path() / "project";
