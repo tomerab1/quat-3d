@@ -1,5 +1,5 @@
 //! The gameplay script tools (`script_*`), the scripting reference resource
-//! and the `write_game_script` prompt, end to end against the mock engine.
+//! and the `write-gameplay-script` prompt, end to end against the mock engine.
 
 mod common;
 
@@ -105,7 +105,7 @@ async fn script_tools_prompt_and_resource_are_listed() {
     assert!(schema.contains("source") && schema.contains("assets/scripts/"));
 
     let prompts = client.list_all_prompts().await.unwrap();
-    assert!(prompts.iter().any(|p| p.name == "write_game_script"));
+    assert!(prompts.iter().any(|p| p.name == "write-gameplay-script"));
     let resources = client.list_all_resources().await.unwrap();
     assert!(resources.iter().any(|r| r.uri == "quat://docs/scripting"));
     client.cancel().await.unwrap();
@@ -240,14 +240,14 @@ async fn syntax_errors_name_the_line_and_bad_input_stays_local() {
 }
 
 #[tokio::test]
-async fn write_game_script_prompt_walks_the_workflow() {
+async fn write_gameplay_script_prompt_walks_the_workflow() {
     let engine = MockEngine::start(None, script_handler).await;
     let client = connect(&engine.addr_string()).await;
     let args = json!({"goal": "a door that opens when the player is near",
                       "entity": "Door", "path": "door.lua"});
     let prompt = client
         .get_prompt(
-            GetPromptRequestParams::new("write_game_script")
+            GetPromptRequestParams::new("write-gameplay-script")
                 .with_arguments(args.as_object().unwrap().clone()),
         )
         .await
@@ -268,7 +268,7 @@ async fn write_game_script_prompt_walks_the_workflow() {
 
     let bare = client
         .get_prompt(
-            GetPromptRequestParams::new("write_game_script")
+            GetPromptRequestParams::new("write-gameplay-script")
                 .with_arguments(json!({"goal": "x"}).as_object().unwrap().clone()),
         )
         .await

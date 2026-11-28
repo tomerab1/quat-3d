@@ -59,6 +59,7 @@ Merged on 2026-11-27 after cycle 2:
 | #53 | A9 world-building (fixes #37–#42) | `feat/a9-worldbuilding` | draft; worker running |
 | #54 | A10.1 physics control (fixes #47 #48) | `feat/a10-physics-control` | draft; worker running |
 | #55 | P4 game packaging + E7 export | `feat/p4-game-packaging` | draft; worker running |
+| #83 | A12.1 skills (MCP skills extension, prompts, Claude Code plugin) | `feat/a12-skills` | train #93 merged in (A6 shader + G7 script tools used by the skills; plugin works with the release-bundled quat-mcp); A12.2 waits on #54, A10.4, R4 |
 
 Queued for the next free agents, in order:
 1. R13 weather.
