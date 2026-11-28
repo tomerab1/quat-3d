@@ -17,6 +17,18 @@
 // read straight from a push-constant member (or through `->` members) is
 // fine. This SPIR-V walk runs on every platform, so the rule is caught
 // before the macOS job.
+//
+// Second rule: no atomic through a buffer device address. For
+// `InterlockedAdd(*pc.counter, 1)` (an OpAtomicIAdd whose pointer operand is
+// a PhysicalStorageBuffer pointer loaded from push constants) the SPIRV-Cross
+// revision MoltenVK 1.4.x embeds emits
+// `atomic_fetch_add_explicit((device atomic_uint*)&pc.counter, ...)` — the
+// address of the pointer member, in the constant address space — and Metal
+// refuses the cast ("converts between mismatching address spaces"), so the
+// pipeline fails with VK_ERROR_INITIALIZATION_FAILED. Homebrew's spirv-cross
+// translates the same SPIR-V correctly, which is why the macOS job missed it.
+// Atomic counters live in descriptor-bound storage buffers
+// (RWStructuredBuffer / RWByteAddressBuffer) instead.
 
 #include <cstddef>
 #include <cstdint>
@@ -55,7 +67,41 @@ enum Op : std::uint32_t {
     op_in_bounds_ptr_access_chain = 70,
     op_composite_extract = 81,
     op_copy_object = 83,
+    op_function_parameter = 55,
+    op_convert_u_to_ptr = 120,
+    op_bitcast = 124,
+    op_select = 169,
+    op_phi = 245,
+    // Atomics. All but OpAtomicStore / OpAtomicFlagClear have a result:
+    // [result type, result id, pointer, ...]; those two: [pointer, ...].
+    op_atomic_load = 227,
+    op_atomic_store = 228,
+    op_atomic_exchange = 229,
+    op_atomic_compare_exchange = 230,
+    op_atomic_compare_exchange_weak = 231,
+    op_atomic_i_increment = 232,
+    op_atomic_i_decrement = 233,
+    op_atomic_i_add = 234,
+    op_atomic_i_sub = 235,
+    op_atomic_s_min = 236,
+    op_atomic_u_min = 237,
+    op_atomic_s_max = 238,
+    op_atomic_u_max = 239,
+    op_atomic_and = 240,
+    op_atomic_or = 241,
+    op_atomic_xor = 242,
+    op_atomic_flag_test_and_set = 318,
+    op_atomic_flag_clear = 319,
+    op_atomic_f_min_ext = 5614,
+    op_atomic_f_max_ext = 5615,
+    op_atomic_f_add_ext = 6035,
 };
+
+[[nodiscard]] constexpr bool is_atomic(std::uint32_t op) {
+    return (op >= op_atomic_load && op <= op_atomic_xor) || op == op_atomic_flag_test_and_set ||
+           op == op_atomic_flag_clear || op == op_atomic_f_min_ext ||
+           op == op_atomic_f_max_ext || op == op_atomic_f_add_ext;
+}
 constexpr std::uint32_t k_uniform = 2;
 constexpr std::uint32_t k_push_constant = 9;
 constexpr std::uint32_t k_storage_buffer = 12;
@@ -74,6 +120,7 @@ public:
             const std::uint32_t count = words[i] >> 16U;
             if (count == 0 || i + count > words.size()) {
                 defs_.clear();
+                atomics_.clear();
                 return;
             }
             Inst inst{words[i] & 0xFFFFU,
@@ -82,6 +129,22 @@ public:
             record(std::move(inst));
             i += count;
         }
+    }
+
+    // Atomics whose pointer operand is a PhysicalStorageBuffer pointer (any
+    // atomic reached through a buffer device address), named by the pointer.
+    [[nodiscard]] std::vector<std::string> atomics_through_device_addresses() const {
+        std::vector<std::string> bad;
+        for (const Inst& atomic : atomics_) {
+            const bool no_result = atomic.op == op_atomic_store || atomic.op == op_atomic_flag_clear;
+            const std::size_t at = no_result ? 0 : 2;
+            if (atomic.operands.size() <= at) continue;
+            const std::uint32_t pointer = atomic.operands[at];
+            if (storage_class(type_of(pointer)) == k_physical) {
+                bad.push_back("atomic op " + std::to_string(atomic.op) + " on " + name_of(pointer));
+            }
+        }
+        return bad;
     }
 
     // Names of the OpPtrAccessChains SPIRV-Cross folds wrongly.
@@ -105,6 +168,10 @@ public:
 
 private:
     void record(Inst inst) {
+        if (is_atomic(inst.op)) {
+            atomics_.push_back(std::move(inst));
+            return;
+        }
         switch (inst.op) {
         case op_name: {
             if (inst.operands.size() < 2) return;
@@ -131,7 +198,11 @@ private:
         case op_ptr_access_chain:
         case op_in_bounds_ptr_access_chain:
         case op_composite_extract:
-        case op_copy_object: {
+        case op_copy_object:
+        case op_convert_u_to_ptr:
+        case op_bitcast:
+        case op_select:
+        case op_phi: {
             // [result type, result id, first operand]; a pointer chain also
             // has its element index.
             const bool ptr_chain =
@@ -141,6 +212,11 @@ private:
             defs_[id] = std::move(inst);
             return;
         }
+        case op_function_parameter:
+            // [result type, result id]: only its type matters (a pointer
+            // argument of an inlined-out helper).
+            if (inst.operands.size() >= 2) defs_[inst.operands[1]] = std::move(inst);
+            return;
         default:
             return;
         }
@@ -161,6 +237,15 @@ private:
         const auto it = defs_.find(id);
         return it == defs_.end() || it->second.op == op_type_pointer ? 0
                                                                      : it->second.operands[0];
+    }
+
+    // Storage class of a pointer type (0 when not a known pointer type).
+    [[nodiscard]] std::uint32_t storage_class(std::uint32_t pointer_type) const {
+        const auto it = defs_.find(pointer_type);
+        return it != defs_.end() && it->second.op == op_type_pointer &&
+                       it->second.operands.size() >= 2
+                   ? it->second.operands[1]
+                   : 0;
     }
 
     [[nodiscard]] std::uint32_t pointee(std::uint32_t pointer_type) const {
@@ -250,11 +335,26 @@ private:
     std::unordered_map<std::uint32_t, Inst>        defs_;
     std::unordered_map<std::uint32_t, std::string> names_;
     std::unordered_map<std::uint32_t, bool>        memo_;
+    std::vector<Inst>                              atomics_;
 };
 
 [[nodiscard]] std::vector<std::string> misfolded_pointer_chains(
     const std::vector<std::uint32_t>& words) {
     return Walker(words).misfolded_pointer_chains();
+}
+
+[[nodiscard]] std::vector<std::string> atomics_through_device_addresses(
+    const std::vector<std::uint32_t>& words) {
+    return Walker(words).atomics_through_device_addresses();
+}
+
+[[nodiscard]] std::vector<std::uint32_t> read_spirv(const std::filesystem::path& path) {
+    std::ifstream in(path, std::ios::binary);
+    std::vector<char> bytes((std::istreambuf_iterator<char>(in)), {});
+    if (bytes.size() % 4 != 0) return {};
+    std::vector<std::uint32_t> words(bytes.size() / 4);
+    std::memcpy(words.data(), bytes.data(), bytes.size());
+    return words;
 }
 
 // Hand-assembled SPIR-V: just the instructions the walker reads, in the
@@ -289,6 +389,16 @@ public:
     std::uint32_t variable(std::uint32_t storage, std::uint32_t block) {
         return value(op_variable, ptr(storage, block), {storage});
     }
+    // OpAtomicIAdd(pointer, Device scope, relaxed, 1) — the result type is
+    // the pointee's (u32 here).
+    std::uint32_t atomic_add(std::uint32_t pointer) {
+        return value(op_atomic_i_add, u32(), {pointer, constant(1), constant(0), constant(1)});
+    }
+    // An instruction with no result id: [operands...].
+    void statement(std::uint32_t op, std::initializer_list<std::uint32_t> operands) {
+        emit(op, {}, operands);
+    }
+
     // `pointer`[element], the pattern under test.
     std::uint32_t index(std::uint32_t pointer, std::uint32_t pointer_type) {
         return value(op_ptr_access_chain, pointer_type, {pointer, constant(2)});
@@ -431,6 +541,86 @@ TEST(MslPortability, MalformedModulesYieldNothing) {
     std::vector<std::uint32_t> truncated = m.words();
     truncated.pop_back();
     EXPECT_TRUE(misfolded_pointer_chains(truncated).empty());
+    EXPECT_TRUE(atomics_through_device_addresses({}).empty());
+    EXPECT_TRUE(atomics_through_device_addresses(truncated).empty());
+    EXPECT_TRUE(atomics_through_device_addresses(bad_magic).empty());
+}
+
+// The bloom / TAA shape that broke on MoltenVK: InterlockedAdd(*pc.counter, 1)
+// with `uint* counter` in push constants.
+TEST(MslPortability, FlagsAnAtomicThroughAPushConstantPointer) {
+    Module m;
+    const std::uint32_t psb_u32 = m.ptr(k_physical, m.u32());
+    const std::uint32_t pc = m.variable(k_push_constant, m.type(op_type_struct, {psb_u32}));
+    const std::uint32_t field =
+        m.value(op_access_chain, m.ptr(k_push_constant, psb_u32), {pc, m.constant(0)});
+    m.atomic_add(m.value(op_load, psb_u32, {field}));
+    EXPECT_EQ(atomics_through_device_addresses(m.words()).size(), 1U);
+}
+
+// Atomics on a member or element behind a pointer, a pointer read from a
+// storage buffer, one built from a uint64 (OpConvertUToPtr), and the
+// result-less OpAtomicStore are all through a device address too.
+TEST(MslPortability, FlagsEveryAtomicShapeThroughADeviceAddress) {
+    Module m;
+    const std::uint32_t psb_u32 = m.ptr(k_physical, m.u32());
+    const std::uint32_t counters = m.type(op_type_struct, {m.u32(), m.u32()});
+    const std::uint32_t psb_counters = m.ptr(k_physical, counters);
+    const std::uint32_t pc = m.variable(k_push_constant, m.type(op_type_struct, {psb_counters}));
+    const std::uint32_t field =
+        m.value(op_access_chain, m.ptr(k_push_constant, psb_counters), {pc, m.constant(0)});
+    const std::uint32_t block = m.value(op_load, psb_counters, {field});
+    // (*pc.counters).b
+    m.atomic_add(m.value(op_access_chain, psb_u32, {block, m.constant(1)}));
+    // pc.counters[2]
+    const std::uint32_t element = m.index(block, psb_counters);
+    m.atomic_add(m.value(op_access_chain, psb_u32, {element, m.constant(0)}));
+    // A pointer stored in a storage buffer.
+    const std::uint32_t g = m.variable(k_storage_buffer, m.type(op_type_struct, {psb_u32}));
+    const std::uint32_t slot =
+        m.value(op_access_chain, m.ptr(k_storage_buffer, psb_u32), {g, m.constant(0)});
+    m.atomic_add(m.value(op_load, psb_u32, {slot}));
+    // A uint64 address converted to a pointer.
+    const std::uint32_t u64 = m.type(op_type_int, {64, 0});
+    m.atomic_add(m.value(op_convert_u_to_ptr, psb_u32, {m.value(op_constant, u64, {16, 0})}));
+    // OpAtomicStore(pointer, scope, semantics, value)
+    m.statement(op_atomic_store, {m.value(op_load, psb_u32, {slot}), m.constant(1), m.constant(0),
+                                  m.constant(7)});
+    EXPECT_EQ(atomics_through_device_addresses(m.words()).size(), 5U);
+}
+
+// The fix: the counter in a descriptor-bound RWStructuredBuffer<uint>
+// (StorageBuffer storage class), and a groupshared counter.
+TEST(MslPortability, AcceptsAtomicsOnDescriptorAndWorkgroupMemory) {
+    Module m;
+    const std::uint32_t runtime = m.type(op_type_runtime_array, {m.u32()});
+    const std::uint32_t g = m.variable(k_storage_buffer, m.type(op_type_struct, {runtime}));
+    m.atomic_add(m.value(op_access_chain, m.ptr(k_storage_buffer, m.u32()),
+                         {g, m.constant(0), m.constant(0)}));
+    constexpr std::uint32_t k_workgroup = 4;
+    m.atomic_add(m.variable(k_workgroup, m.u32()));
+    EXPECT_TRUE(atomics_through_device_addresses(m.words()).empty());
+}
+
+// No cooked shader does an atomic through a buffer device address.
+TEST(MslPortability, NoCookedShaderHasAnAtomicThroughADeviceAddress) {
+    const std::filesystem::path dir = QUAT_COOKED_SHADER_DIR;
+    std::error_code ec;
+    if (!std::filesystem::is_directory(dir, ec)) GTEST_SKIP() << "no cooked shaders at " << dir;
+    int checked = 0;
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(dir, ec)) {
+        if (entry.path().extension() != ".spv") continue;
+        const std::vector<std::uint32_t> words = read_spirv(entry.path());
+        ASSERT_FALSE(words.empty()) << entry.path();
+        for (const std::string& atomic : atomics_through_device_addresses(words)) {
+            ADD_FAILURE() << entry.path().filename() << ": " << atomic
+                          << " goes through a buffer device address; MoltenVK's SPIRV-Cross "
+                             "emits Metal that does not compile for it. Bind the counter as a "
+                             "storage buffer (RWStructuredBuffer<uint>) instead";
+        }
+        ++checked;
+    }
+    EXPECT_GT(checked, 0);
 }
 
 // No cooked pass or material shader indexes a pointer read through [...].
@@ -441,11 +631,8 @@ TEST(MslPortability, NoCookedShaderIndexesAPointerReadThroughAnIndex) {
     int checked = 0;
     for (const auto& entry : std::filesystem::recursive_directory_iterator(dir, ec)) {
         if (entry.path().extension() != ".spv") continue;
-        std::ifstream in(entry.path(), std::ios::binary);
-        std::vector<char> bytes((std::istreambuf_iterator<char>(in)), {});
-        ASSERT_EQ(bytes.size() % 4, 0U) << entry.path();
-        std::vector<std::uint32_t> words(bytes.size() / 4);
-        std::memcpy(words.data(), bytes.data(), bytes.size());
+        const std::vector<std::uint32_t> words = read_spirv(entry.path());
+        ASSERT_FALSE(words.empty()) << entry.path();
         for (const std::string& chain : misfolded_pointer_chains(words)) {
             ADD_FAILURE() << entry.path().filename() << ": " << chain
                           << " indexes a pointer that was read through [...]; MoltenVK's "

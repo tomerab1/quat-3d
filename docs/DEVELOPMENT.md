@@ -262,7 +262,7 @@ demand (`workflow_dispatch`):
 |---|---|---|---|
 | `linux` | ubuntu-24.04 | `release` | CPU + GPU on Mesa lavapipe; then `game` once more with `ENGINE_EDITOR=OFF` (sharing the dependency tree) |
 | `windows` | windows-2022 | `windows-release` | CPU + GPU on Mesa lavapipe (Windows build, from `jakoch/install-vulkan-sdk-action`) |
-| `macos` | macos-15 (Apple Silicon) | `macos-release` | CPU; MSL translation check of every cooked shader; GPU on MoltenVK over the runner's paravirtual Metal device — both informational (`continue-on-error`) until P1 makes them a gate |
+| `macos` | macos-15 (Apple Silicon) | `macos-release` | CPU; MSL check of every cooked shader with SPIRV-Cross at each covered MoltenVK release's pin + `xcrun metal` (blocking); GPU on MoltenVK (Homebrew's, the latest release and 1.4.1) over the runner's paravirtual Metal device — informational (`continue-on-error`) until P1 makes it a gate |
 | `rust` | ubuntu-24.04 | — | `tools/quat-mcp` fmt, clippy, tests |
 
 Each C++ job pins vcpkg to the manifest baseline and Slang to the same
@@ -280,13 +280,22 @@ pipeline is created, and a failed translation surfaces only as
 the shader and the error:
 
 - **`scripts/msl-check.sh <cooked-shader-dir> [out-dir]`** translates every
-  cooked entry point with SPIRV-Cross and, on macOS, compiles the MSL with
-  `xcrun metal`. The `macos` job runs it after the build (informational). It
-  also runs on Linux with `apt install spirv-cross`, but Ubuntu 24.04's
-  package is from 2021 and both misses and invents errors compared with the
-  current SPIRV-Cross; trust the macOS step (Homebrew's `spirv-cross`).
-  Neither is the revision MoltenVK pins, so confirm a finding with
-  `mvk_debug` (below), which shows MoltenVK's own translation.
+  cooked entry point with SPIRV-Cross (`SPIRV_CROSS=<cli>`, default the one
+  on `PATH`) and, on macOS, compiles the MSL with `xcrun metal`.
+  Translation bugs differ between SPIRV-Cross revisions, so use the revision
+  the MoltenVK in question embeds:
+  `scripts/build-mvk-spirv-cross.sh <moltenvk-tag> <work-dir>` builds the CLI
+  at that release's `ExternalRevisions/SPIRV-Cross_repo_revision` (about a
+  minute; it also runs on Linux, where it reproduces translation output but
+  not Metal compile errors). The `macos` job runs the check, blocking, for
+  Homebrew's MoltenVK, the latest release, 1.4.1 and 1.4.0. Homebrew's own
+  `spirv-cross` and Ubuntu's 2021 package are not MoltenVK's revisions and
+  both miss real failures. `mvk_debug` (below) shows MoltenVK's own
+  translation.
+- **`scripts/fetch-moltenvk-release.sh <tag|latest> <work-dir>`** downloads a
+  MoltenVK release's macOS dylib and prints an ICD manifest for
+  `VK_ICD_FILENAMES`, to run the GPU tests on a MoltenVK other than
+  Homebrew's (the `macos` job does this for the latest release and 1.4.1).
 - **`mvk_debug` workflow input:** `gh workflow run ci.yml --ref <branch> -f
   mvk_debug=true` runs the macOS GPU tests with `MVK_CONFIG_LOG_LEVEL=4`
   (debug), `MVK_CONFIG_DEBUG=1` (the generated MSL of each converted shader)
