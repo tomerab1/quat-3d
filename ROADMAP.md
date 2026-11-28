@@ -606,7 +606,8 @@ Engine items never depend on game items.
     performance targets, tests, phasing.
   - [ ] **G16.1 Project skeleton in the `cozy-builder` repository.**
     Needs from the owner: the empty repository, connected to Claude's GitHub
-    app, plus a `QUAT3D_SDK_TOKEN` secret. Then:
+    app. SDK releases download from public GitHub Releases with no token.
+    Then:
     - `engine.lock` and CI against the SDK tag (build, tests, Linux
       screenshots, an SDK-bump PR flow);
     - Part II of the design moved there;
@@ -658,7 +659,10 @@ Engine items never depend on game items.
     G16.5; runs beside G16.6–G16.8)*
 
   Later, by default and not yet scheduled: generated maps (after the fixed
-  meadow), gamepad support (after desktop), water and bridges (R16, R25.4).
+  meadow), gamepad support (after desktop), and water and bridges (after
+  R16, with R25.4 freezing), which come before G16.9 ambient life. The
+  default season pace is a 40-minute year with a 12-minute day, with a
+  "follow the real calendar" option.
 
 ---
 

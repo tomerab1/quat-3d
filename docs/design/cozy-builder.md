@@ -49,7 +49,7 @@ Contents:
 7. [Performance targets](#7-performance-targets)
 8. [Testing](#8-testing)
 9. [Phasing](#9-phasing)
-10. [Decisions and open questions](#10-decisions-and-open-questions)
+10. [Decisions](#10-decisions)
 
 Every published technique cited here is also in
 [`docs/reading/README.md`](../reading/README.md), under "Procedural
@@ -223,10 +223,10 @@ change CLAUDE.md.
 
 ### 3.2 The game repository
 
-- **Name**: `cozy-builder`, under the same GitHub owner as `quat-3d`,
-  private like the engine.
+- **Name**: `cozy-builder`, under the same GitHub owner as `quat-3d`.
 - **The owner must create it** (empty, with a default branch) **and connect
-  it to Claude's GitHub app.** The factory cannot create repositories. Once
+  it to Claude's GitHub app.** The factory cannot create repositories. This
+  is the only owner action the plan needs. Once
   it exists, sessions attach it with the repository tools and the
   orchestrator runs game items there exactly as it does here.
 - It gets its own `CLAUDE.md`, `docs/STATUS.md`, `ROADMAP.md` (the G16
@@ -528,10 +528,8 @@ game method, so phases can ship before it.
   archive, for example `version = "0.4.2"`.
 - **Workflow `ci.yml`**, on every PR and push:
   1. Download the three SDK archives from the engine's GitHub Release for
-     that tag with `gh release download`. The engine repository is private,
-     so this needs a read-only token: a fine-grained PAT or GitHub App token
-     with `contents: read` on `quat-3d`, stored as the `QUAT3D_SDK_TOKEN`
-     secret. **The owner creates it.**
+     that tag with `gh release download`. `quat-3d` is public, so its
+     releases download anonymously and no token or secret is needed.
   2. Verify the checksums, then configure with `CMAKE_PREFIX_PATH` and the
      SDK toolchain file.
   3. Build, then run `cozy_builder_tests` (generation goldens, undo, saves,
@@ -549,7 +547,9 @@ game method, so phases can ship before it.
   the engine's `master` SDK artifact (a nightly SDK from the engine CI),
   reports to the game repo's STATUS, and fails no PR.
 - Engine CI cost does not grow: the engine repository never builds the
-  game. The billing blocker in STATUS.md applies to both repositories.
+  game. `quat-3d` is public (the owner made it public on 2026-11-27 to
+  lift the Actions billing limit). If `cozy-builder` is public too, its CI
+  runs on GitHub's free standard runners as well.
 
 ---
 
@@ -1477,8 +1477,11 @@ implementations, variant sets and snow masks. The game supplies the
 
 - **The year**: independent mode with `drive_clock_date` by default, with a
   40-minute year at normal speed (10 minutes per season) and a day cycle of
-  12 minutes, both adjustable in the mood panel. A "hold this season" toggle switches to
-  `manual`, so a player who loves autumn can stay there. `Climate`
+  12 minutes, both adjustable in the mood panel (decided by default). A
+  **"follow the real calendar"** option switches R25.1 to clock mode: the
+  `WorldClock` runs in real time on today's date, so seasons and day length
+  match the player's own. A "hold this season" toggle switches to `manual`,
+  so a player who loves autumn can stay there. `Climate`
   (`data/seasons/climate.json`) is a temperate, northern-European-style
   profile: snow is likely from the middle of winter, and there are spring
   showers.
@@ -1719,7 +1722,7 @@ release** (tagged once #24 merges).
 | ID | Phase | Depends on |
 |---|---|---|
 | G16.0 | This design | — |
-| G16.1 | **Skeleton in the new repository**: the owner creates `cozy-builder` and connects it to Claude's GitHub app, and adds the `QUAT3D_SDK_TOKEN` secret. Then: `engine.lock`, CI against the SDK tag, Part II of this document moved there, module registration, the fixed meadow scene (terrain + grass + WorldClock + SeasonState), the camera rig with the owner's numbers, the input map, the tests target, the asset fetch script + licence records and seasonal inventory. `cozy-builder` runs and packages | P8, G17.1, G5.1, G15.1, P4 |
+| G16.1 | **Skeleton in the new repository**: the owner creates `cozy-builder` and connects it to Claude's GitHub app. Then: `engine.lock`, CI against the SDK tag, Part II of this document moved there, module registration, the fixed meadow scene (terrain + grass + WorldClock + SeasonState), the camera rig with the owner's numbers, the input map, the tests target, the asset fetch script + licence records and seasonal inventory. `cozy-builder` runs and packages | P8, G17.1, G5.1, G15.1, P4 |
 | G16.2 | **Walls**: stroke → `WallRun` → network, junction rules, body sweep with terrain adaptation, stones, crenellations, pillars, colliders, picking, erase, ghost + validation; `build_wall_path`, `build_remove`, `build_query`, `build_validate` | G18.1–G18.3, R23.1, R23.2, R9.5 |
 | G16.3 | **Buildings and roofs**: footprints, merge groups, floors, façade rules, door and windows, straight-skeleton and cone roofs, foundation flatten + plinth; towers; `build_house`, `build_tower`, `build_styles` | G16.2, G19.1, R23.1 |
 | G16.4 | **Paths, gates, fences and ivy**: path paint + decals + stepping stones, gates where paths cross walls and fences, ivy growth; `build_path`, `build_fence` | G16.2, G19.1, R24, R9.5 |
@@ -1741,11 +1744,12 @@ Later, by default and not yet scheduled:
 - generated maps (a choice of seeded meadows, after the fixed meadow);
 - gamepad support (G5 contexts and G6.1 focus navigation are designed for
   it from the start);
-- water, ponds and bridges (R16, R25.4).
+- water, ponds and bridges (after R16, with R25.4 freezing), scheduled
+  **before** G16.9 ambient life (decided by default).
 
 ---
 
-## 10. Decisions and open questions
+## 10. Decisions
 
 **Decided by the owner (2026-11-28):**
 
@@ -1760,7 +1764,7 @@ Later, by default and not yet scheduled:
 4. **Seasons**: a full seasons system (R25 in the engine, G16.10 in the
    game), not only a day/night slider and weather.
 
-**Decided by default (the owner may still overrule):**
+**Decided by default (the owner can adjust any of these):**
 
 5. A **per-game executable with a native C++ module** is fine (§3.6).
 6. **Terrain**: a fixed meadow first, generated maps later.
@@ -1769,15 +1773,11 @@ Later, by default and not yet scheduled:
 9. **Art**: CC0 kits.
 10. **Priority**: G16's engine items take priority after the **v0.1.0**
     release (ROADMAP note).
+11. **Season pace**: an accelerated year by default (a 40-minute year with
+    a 12-minute day), with a "follow the real calendar" option (§5.16).
+12. **Order**: water and bridges (after R16) come before G16.9 ambient
+    life.
 
-**Still open:**
-
-11. **SDK token**: who owns the read-only token (fine-grained PAT or a
-    GitHub App) that lets the game repository's CI download private engine
-    releases? Would the owner rather make the engine repository public,
-    which also lifts the Actions billing limit in STATUS.md?
-12. **Year length**: is a 40-minute year (10 minutes per season) with a
-    12-minute day the right default pace, or should seasons follow the real
-    calendar date?
-13. **Water**: should ponds, streams and bridges (R16, R25.4) come before
-    or after G16.9 ambient life?
+**Owner action needed:** create the empty `cozy-builder` repository and
+connect it to Claude's GitHub app. `quat-3d` is public, so the game's CI
+needs no token to download SDK releases.
