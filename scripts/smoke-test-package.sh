@@ -46,6 +46,46 @@ done
 engine_pkg=0
 [ "$exe" = game ] && engine_pkg=1
 mcp_version=""
+# macOS: prints the crashed and main threads of the newest crash report for
+# <exe> written after <marker> (ReportCrash needs a few seconds).
+print_macos_crash_report() {
+  local exe=$1 marker=$2 dir="$HOME/Library/Logs/DiagnosticReports" report="" _
+  for _ in $(seq 1 30); do
+    report=$(find "$dir" -maxdepth 1 -name "$exe*.ips" -newer "$marker" 2>/dev/null | sort | tail -n1)
+    [ -n "$report" ] && break
+    sleep 1
+  done
+  if [ -z "$report" ]; then
+    echo "no crash report for $exe in $dir" >&2
+    return 0
+  fi
+  echo "---- crash report: $report" >&2
+  python3 - "$report" >&2 <<'PY'
+import json
+import sys
+
+text = open(sys.argv[1], encoding="utf-8", errors="replace").read()
+_, _, body = text.partition("\n")  # line 1: header object; then the report
+try:
+    report = json.loads(body)
+except ValueError:
+    print(text[:20000])
+    sys.exit(0)
+images = report.get("usedImages", [])
+print("exception:", json.dumps(report.get("exception", {})))
+faulting = report.get("faultingThread", 0)
+for index, thread in enumerate(report.get("threads", [])):
+    if index not in (0, faulting):
+        continue
+    label = "crashed" if index == faulting else "main"
+    print(f"thread {index} ({label}) {thread.get('name', '')} {thread.get('queue', '')}")
+    for n, frame in enumerate(thread.get("frames", [])[:64]):
+        image = frame.get("imageIndex", -1)
+        name = images[image].get("name", "?") if 0 <= image < len(images) else "?"
+        symbol = frame.get("symbol", hex(frame.get("imageOffset", 0)))
+        print(f"  #{n:<2} {name:<28} {symbol} + {frame.get('symbolLocation', 0)}")
+PY
+}
 
 rm -rf "$scratch"
 mkdir -p "$scratch"
@@ -139,7 +179,20 @@ case "$archive" in
   # a DLL the package lacks cannot be picked up from the runner's tool dirs.
   clean_path="$sys32:$(dirname "$sys32")"
   [ -n "${VULKAN_SDK:-}" ] && clean_path="$clean_path:$(cygpath -u "$VULKAN_SDK")/runtime/x64"
-  (cd "$scratch" && PATH="$clean_path" "$dir/$exe.exe") 2>&1 | tee "$log"
+  status=0
+  (cd "$scratch" && PATH="$clean_path" "$dir/$exe.exe") 2>&1 | tee "$log" || status=$?
+  if [ "$status" != 0 ]; then
+    # Git Bash reports most crashes (an unhandled NTSTATUS such as
+    # 0xC0000409, MSVC's fast-fail after abort / an exception in a build
+    # without them) as 127; run it once more through PowerShell for the code.
+    # shellcheck disable=SC2016 # PowerShell expands these
+    code=$(cd "$scratch" && PATH="$clean_path:$sys32/WindowsPowerShell/v1.0" \
+             QUAT_SMOKE_EXE="$(cygpath -w "$dir/$exe.exe")" powershell.exe -NoProfile -Command \
+             '$p = Start-Process $env:QUAT_SMOKE_EXE -Wait -PassThru -NoNewWindow; "0x{0:X8}" -f $p.ExitCode' \
+             2>/dev/null | tr -d '\r' | tail -n1)
+    echo "$exe.exe exited with status $status (process exit code ${code:-unknown})" >&2
+    exit "$status"
+  fi
   if [ "$engine_pkg" = 1 ]; then mcp_version=$(PATH="$clean_path" "$dir/quat-mcp.exe" --version | tr -d '\r'); fi
   ;;
 *macos-arm64.zip)
@@ -160,7 +213,15 @@ case "$archive" in
     echo "note: not on CI - keeping Homebrew's Vulkan installed" >&2
   fi
   export VK_LOADER_DEBUG=driver
-  (cd "$scratch" && "$app/Contents/MacOS/$exe") 2>&1 | tee "$log"
+  touch "$scratch/.launched"
+  status=0
+  (cd "$scratch" && "$app/Contents/MacOS/$exe") 2>&1 | tee "$log" || status=$?
+  if [ "$status" != 0 ]; then
+    # A crash leaves only "Segmentation fault: 11" here; ReportCrash writes
+    # the backtrace to a .ips report a moment later.
+    print_macos_crash_report "$exe" "$scratch/.launched"
+    exit "$status"
+  fi
   grep -q "$(basename "$app")/Contents/Resources/vulkan/icd.d" "$log" \
     || { echo "loader did not use the bundled MoltenVK manifest" >&2; exit 1; }
   if [ "$engine_pkg" = 1 ]; then mcp_version=$("$app/Contents/MacOS/quat-mcp" --version); fi
