@@ -680,3 +680,27 @@ it reordered, and an unvalidated ini file. Each lived in code only reachable
 through an ImGui frame. **Rule:** UI actions are plain functions over the
 registry or the state struct, called by the widget and by GoogleTest;
 anything read from disk goes through a pure, tested parser.
+
+## `merge=union` on LEARNINGS.md blocked every open PR on GitHub (factory)
+
+`.gitattributes` gives `docs/LEARNINGS.md` the `union` merge driver, so
+concurrent appends merge cleanly with local git. GitHub's merge ignores
+merge drivers. When #106 appended a lesson to master, every open PR that
+also appended one (10 of 12) turned "dirty" and could not be merged, while
+local trial merges said "clean". Each later merge would have blocked the rest
+again, serialising the queue on hour-long CI runs. The earlier lesson ("trust
+GitHub's `mergeable` flag") caught the symptom but not the cause. **Rule:**
+feature PRs never edit `docs/LEARNINGS.md` or `docs/STATUS.md`; lessons go
+in the PR body under "Lessons for LEARNINGS", and the orchestrator carries
+them over in its own docs PRs. Check mergeability with GitHub's flag, never a
+local trial merge.
+
+## Merging a docs PR mid-queue conflicted eight PRs (factory)
+
+#104 (design doc + ROADMAP items) and #83 (prompts moved to skills) landed
+while eight PRs were in CI. All eight conflicted on ROADMAP.md, README.md or
+the quat-mcp prompt files, so their CI runs were wasted and each needed
+another merge and run. **Rule:** while a merge queue drains, hold PRs that
+reshape shared files (ROADMAP sections, README tables, module layouts) until
+the queue is empty, or land them first and only then start the others' CI.
+
