@@ -3,11 +3,11 @@
 #include "app/module_methods.hpp"
 
 #include <algorithm>
-#include <cstdio>
 #include <string>
 #include <utility>
 
 #include "app/module_runtime.hpp"
+#include "engine/core/log.hpp"
 #include "engine/game/json_schema.hpp"
 #include "engine/remote/rpc_server.hpp"
 
@@ -23,8 +23,8 @@ void install_module_methods(engine::remote::RpcServer& server, const ModuleRunti
     const std::vector<remote::MethodInfo> existing = server.methods();
     for (const engine::game::MethodDesc& m : set->methods()) {
         if (std::ranges::any_of(existing, [&](const remote::MethodInfo& e) { return e.name == m.name; })) {
-            std::fprintf(stderr, "[game][warn] module method '%s' is already defined; skipped\n",
-                         m.name.c_str());
+            engine::core::log(engine::core::LogLevel::warn, "game",
+                              "module method '{}' is already defined; skipped", m.name);
             continue;
         }
         // `m` lives in the ModuleSet, which outlives the endpoint.

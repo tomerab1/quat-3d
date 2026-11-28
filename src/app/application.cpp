@@ -18,6 +18,7 @@
 #include "app/asset_root.hpp"
 #include "app/demo_scenes.hpp"
 #include "app/window_icon.hpp"
+#include "engine/core/log.hpp"
 #include "engine/core/profile.hpp"
 #include "engine/core/utf8_path.hpp"
 #include "engine/scene/bounds.hpp"
@@ -293,7 +294,8 @@ void Application::init_scripts() {
     input_runtime_.init(project_root(), user_input_file());
     if (config_.modules) { // G17.1: before the scripts, which take their Lua modules
         if (auto ok = config_.modules->apply_input(input_runtime_.actions()); !ok) {
-            std::fprintf(stderr, "[game][error] module input actions: %s\n", ok.error().message.c_str());
+            engine::core::log(engine::core::LogLevel::error, "game", "module input actions: {}",
+                              ok.error().message);
         }
         world_.modules().bind(config_.modules.get(), &input_runtime_.actions(), project_root());
     }

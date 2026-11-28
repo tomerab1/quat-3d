@@ -296,4 +296,11 @@ if(QUAT3D_SDK_BUNDLE_DEPS AND DEFINED VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARG
                 PATTERN "*.pdb" EXCLUDE)
         endif()
     endforeach()
+    # protobuf's config package (found through GameNetworkingSockets) imports
+    # protobuf::protoc and refuses to load when that file is missing, so the
+    # tool ships with the tree; vcpkg's other tools are not needed.
+    if(EXISTS "${quat3d_vcpkg_tree}/tools/protobuf")
+        install(DIRECTORY "${quat3d_vcpkg_tree}/tools/protobuf" DESTINATION deps/tools
+            USE_SOURCE_PERMISSIONS)
+    endif()
 endif()

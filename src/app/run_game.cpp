@@ -19,6 +19,7 @@
 #include "app/asset_root.hpp"
 #include "app/game_startup.hpp"
 #include "app/remote_bridge.hpp"
+#include "engine/core/log.hpp"
 #include "engine/core/stderr_capture.hpp"
 #include "engine/game/module_set.hpp"
 #include "engine/scene/component_registry.hpp"
@@ -51,8 +52,8 @@ std::expected<void, core::Error> attach_modules(AppConfig& config,
                 "game.json lists " + std::to_string(required.size()) + " native modules; this "
                 "executable registers " + std::to_string(modules.size())});
         }
-        std::fprintf(stderr, "[game] warning: modules registered without names; game.json's "
-                             "\"modules\" is not checked by name\n");
+        core::log(core::LogLevel::warn, "game",
+                  "modules registered without names; game.json's \"modules\" is not checked by name");
     }
     if (modules.empty()) return {};
     ModuleSet::Options options;
@@ -61,7 +62,7 @@ std::expected<void, core::Error> attach_modules(AppConfig& config,
     if (!set) return std::unexpected(set.error());
     std::string names;
     for (const std::string& n : set->names()) names += (names.empty() ? "" : ", ") + n;
-    std::fprintf(stderr, "[game] native modules: %s\n", names.c_str());
+    core::log(core::LogLevel::info, "game", "native modules: {}", names);
     config.modules = std::make_shared<const ModuleSet>(std::move(*set));
     return {};
 }
